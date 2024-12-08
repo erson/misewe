@@ -1,104 +1,113 @@
 #include "server.h"
+#include "http.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <errno.h>
 
-struct server {
-    int fd;
-    uint16_t port;
-    const char *root_dir;
-    volatile sig_atomic_t running;
-};
+#define BUFFER_SIZE 8192
+#define MAX_REQUEST_SIZE (1024 * 1024)  /* 1MB */
 
-static void handle_signal(int sig) {
-    (void)sig;
-}
+/* Handle client connection */
+static void handle_client(server_t *server, int client_fd) {
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read;
+    size_t total_read = 0;
 
-server_t *server_create(const server_config_t *config) {
-    server_t *server = calloc(1, sizeof(*server));
-    if (!server) return NULL;
+    /* Set timeout */
+    struct timeval tv = {
+        .tv_sec = 30,  /* 30 second timeout */
+        .tv_usec = 0
+    };
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    server->port = config->port;
-    server->root_dir = config->root_dir;
-    server->running = 1;
+    /* Read request */
+    while ((bytes_read = read(client_fd, buffer + total_read,
+                             sizeof(buffer) - total_read - 1)) > 0) {
+        total_read += bytes_read;
 
-    /* Set up signal handling */
-    signal(SIGINT, handle_signal);
-    signal(SIGTERM, handle_signal);
-
-    return server;
-}
-
-void server_run(server_t *server) {
-    struct sockaddr_in addr = {0};
-    
-    /* Create socket */
-    server->fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server->fd < 0) {
-        perror("socket");
-        return;
-    }
-
-    /* Set up address */
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(server->port);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    /* Bind socket */
-    if (bind(server->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        close(server->fd);
-        return;
-    }
-
-    /* Listen for connections */
-    if (listen(server->fd, 10) < 0) {
-        perror("listen");
-        close(server->fd);
-        return;
-    }
-
-    /* Main loop */
-    while (server->running) {
-        struct sockaddr_in client_addr;
-        socklen_t addr_len = sizeof(client_addr);
-        
-        int client_fd = accept(server->fd, 
-                             (struct sockaddr*)&client_addr,
-                             &addr_len);
-        if (client_fd < 0) {
-            perror("accept");
-            continue;
+        /* Check size limit */
+        if (total_read >= MAX_REQUEST_SIZE) {
+            http_send_error(client_fd, 413, "Request too large");
+            return;
         }
 
-        /* Handle connection */
-        char buffer[1024];
-        ssize_t n = read(client_fd, buffer, sizeof(buffer) - 1);
-        if (n > 0) {
-            buffer[n] = '\0';
-            printf("Received request:\n%s\n", buffer);
-
-            /* Send simple response */
-            const char *response = 
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/plain\r\n"
-                "Content-Length: 13\r\n"
-                "\r\n"
-                "Hello, World!";
-            write(client_fd, response, strlen(response));
-        }
-
-        close(client_fd);
+        /* Check for end of headers */
+        if (strstr(buffer, "\r\n\r\n")) break;
     }
+
+    if (bytes_read < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            http_send_error(client_fd, 408, "Request timeout");
+        }
+        return;
+    }
+
+    buffer[total_read] = '\0';
+
+    /* Parse request */
+    http_request_t request;
+    if (!http_parse_request(buffer, total_read, &request)) {
+        http_send_error(client_fd, 400, "Bad request");
+        return;
+    }
+
+    /* Security checks */
+    if (strstr(request.path, "..")) {
+        http_send_error(client_fd, 403, "Path traversal not allowed");
+        return;
+    }
+
+    /* Build file path */
+    char file_path[1024];
+    snprintf(file_path, sizeof(file_path), "%s/%s",
+             server->root_dir,
+             request.path[0] == '/' ? request.path + 1 : request.path);
+
+    /* Open file */
+    int fd = open(file_path, O_RDONLY);
+    if (fd < 0) {
+        http_send_error(client_fd, 404, "File not found");
+        return;
+    }
+
+    /* Get file size */
+    off_t size = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+
+    /* Read file */
+    char *content = malloc(size);
+    if (!content) {
+        close(fd);
+        http_send_error(client_fd, 500, "Internal error");
+        return;
+    }
+
+    if (read(fd, content, size) != size) {
+        free(content);
+        close(fd);
+        http_send_error(client_fd, 500, "Read error");
+        return;
+    }
+
+    close(fd);
+
+    /* Send response */
+    http_response_t response = {
+        .status_code = 200,
+        .content_type = "text/html",  /* TODO: detect content type */
+        .body = content,
+        .body_length = size
+    };
+
+    http_send_response(client_fd, &response);
+    free(content);
 }
 
-void server_destroy(server_t *server) {
-    if (!server) return;
-    if (server->fd > 0) close(server->fd);
-    free(server);
-}
+/* Rest of server.c implementation... */
