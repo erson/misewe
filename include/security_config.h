@@ -3,23 +3,54 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
+
+/* Security levels */
+typedef enum {
+    SECURITY_LOW,
+    SECURITY_MEDIUM,
+    SECURITY_HIGH,
+    SECURITY_PARANOID
+} security_level_t;
+
+/* Rate limiting and connection settings */
+typedef struct {
+    uint32_t max_requests_per_min;
+    uint32_t max_connections;
+    size_t max_request_size;
+    uint32_t timeout_seconds;
+} security_limits_t;
+
+/* File restrictions */
+typedef struct {
+    char allowed_exts[16][8];  /* Max 16 extensions of 7 chars + null */
+    size_t ext_count;
+} security_files_t;
 
 /* Security configuration structure */
 typedef struct {
-    bool enable_https;              /* Enable HTTPS */
-    bool require_auth;              /* Require authentication */
-    bool enable_rate_limit;         /* Enable rate limiting */
-    uint32_t rate_limit_requests;   /* Max requests per window */
-    uint32_t rate_limit_window;     /* Time window in seconds */
-    bool enable_xss_protection;     /* Enable XSS protection */
-    bool enable_csrf_protection;    /* Enable CSRF protection */
-    char csrf_token_secret[64];     /* Secret for CSRF tokens */
-    bool enable_cors;               /* Enable CORS */
-    char allowed_origins[1024];     /* Allowed origins for CORS */
-    bool enable_hsts;               /* Enable HSTS */
-    uint32_t hsts_max_age;         /* HSTS max age in seconds */
-    bool enable_csp;               /* Enable Content Security Policy */
-    char csp_policy[1024];         /* CSP policy string */
+    security_level_t level;
+    security_limits_t limits;
+    security_files_t files;
+    bool log_requests;
+    bool log_errors;
+    char log_dir[256];
+    
+    /* Web security features */
+    bool enable_https;
+    bool require_auth;
+    bool enable_rate_limit;
+    uint32_t rate_limit_requests;
+    uint32_t rate_limit_window;
+    bool enable_xss_protection;
+    bool enable_csrf_protection;
+    char csrf_token_secret[64];
+    bool enable_cors;
+    char allowed_origins[1024];
+    bool enable_hsts;
+    uint32_t hsts_max_age;
+    bool enable_csp;
+    char csp_policy[1024];
 } security_config_t;
 
 /* Function prototypes */
