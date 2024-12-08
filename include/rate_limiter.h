@@ -2,15 +2,16 @@
 #define RATE_LIMITER_H
 
 #include <stdbool.h>
+#include <time.h>
 
 /* Rate limiter context */
 typedef struct rate_limiter rate_limiter_t;
 
-/* Rate limiter configuration */
+/* Rate limit configuration */
 typedef struct {
     unsigned int requests_per_second;
     unsigned int burst_size;
-    unsigned int window_seconds;
+    time_t window_seconds;
 } rate_limit_config_t;
 
 /* Function prototypes */

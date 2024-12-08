@@ -1,7 +1,7 @@
 #include "rate_limiter.h"
+#include "logger.h"
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <pthread.h>
 
 #define MAX_CLIENTS 10000
@@ -12,6 +12,7 @@ typedef struct {
     time_t *requests;
     size_t count;
     time_t window_start;
+    bool blocked;
 } client_track_t;
 
 /* Rate limiter context */
@@ -61,6 +62,7 @@ static client_track_t *get_client(rate_limiter_t *limiter, const char *ip) {
         client_track_t *client = &limiter->clients[limiter->client_count++];
         strncpy(client->ip, ip, sizeof(client->ip) - 1);
         client->requests = calloc(limiter->config.burst_size, sizeof(time_t));
+        client->window_start = time(NULL);
         return client;
     }
 
@@ -80,6 +82,12 @@ bool rate_limiter_check(rate_limiter_t *limiter, const char *ip) {
         return false;
     }
 
+    /* Check if client is blocked */
+    if (client->blocked) {
+        pthread_mutex_unlock(&limiter->lock);
+        return false;
+    }
+
     /* Reset window if needed */
     if (now - client->window_start >= limiter->config.window_seconds) {
         client->count = 0;
@@ -89,6 +97,8 @@ bool rate_limiter_check(rate_limiter_t *limiter, const char *ip) {
     /* Check rate limit */
     if (client->count >= limiter->config.requests_per_second) {
         allowed = false;
+        client->blocked = true;
+        log_write(LOG_WARN, "Rate limit exceeded for IP: %s", ip);
     } else {
         client->requests[client->count++] = now;
     }
@@ -102,12 +112,16 @@ void rate_limiter_destroy(rate_limiter_t *limiter) {
     if (!limiter) return;
 
     pthread_mutex_lock(&limiter->lock);
+
+    /* Free client request arrays */
     for (size_t i = 0; i < limiter->client_count; i++) {
         free(limiter->clients[i].requests);
     }
-    free(limiter->clients);
-    pthread_mutex_unlock(&limiter->lock);
 
+    free(limiter->clients);
+
+    pthread_mutex_unlock(&limiter->lock);
     pthread_mutex_destroy(&limiter->lock);
+
     free(limiter);
 }
