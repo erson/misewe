@@ -1,4 +1,5 @@
 #include "security_headers.h"
+#include <string.h>
 #include <stdio.h>
 
 void add_security_headers(char *headers, size_t size) {
