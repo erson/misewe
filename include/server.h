@@ -12,6 +12,7 @@ typedef struct {
     uint16_t port;              /* Server port */
     char bind_addr[16];         /* Bind address */
     char root_dir[256];         /* Web root directory */
+    uint32_t max_requests;      /* Rate limit: max requests per minute */
 } server_config_t;
 
 /* Function prototypes */
