@@ -1,9 +1,9 @@
-```c
 #include "rate_limit.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <stddef.h>
 
 #define MAX_CLIENTS 10000
 

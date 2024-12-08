@@ -32,9 +32,13 @@ static bool verify_password(const char *stored_pass, const char *provided_pass) 
 }
 
 /* Check credentials */
-bool auth_check_credentials(auth_ctx_t *auth, const char *user, const char *pass) {
+auth_result_t auth_check_credentials(auth_ctx_t *auth, const char *user, const char *pass) {
+    if (!auth || !user || !pass) {
+        return AUTH_RESULT_ERROR;
+    }
+    
     FILE *f = fopen(auth->passwd_file, "r");
-    if (!f) return false;
+    if (!f) return AUTH_RESULT_ERROR;
 
     char line[256];
     bool found = false;
@@ -50,7 +54,11 @@ bool auth_check_credentials(auth_ctx_t *auth, const char *user, const char *pass
     }
 
     fclose(f);
-    return found;
+    if (found) {
+        return AUTH_RESULT_SUCCESS;
+    } else {
+        return AUTH_RESULT_INVALID;
+    }
 }
 
 /* Base64 decode (simplified) */

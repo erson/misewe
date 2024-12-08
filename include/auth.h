@@ -7,11 +7,10 @@
 typedef struct auth_ctx auth_ctx_t;
 
 /* Authentication result */
-typedef struct {
-    bool success;
-    char username[64];
-    bool is_admin;
-    char error[256];
+typedef enum {
+    AUTH_RESULT_SUCCESS,
+    AUTH_RESULT_INVALID,
+    AUTH_RESULT_ERROR
 } auth_result_t;
 
 /* Function prototypes */

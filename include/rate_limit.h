@@ -1,4 +1,3 @@
-```c
 #ifndef RATE_LIMIT_H
 #define RATE_LIMIT_H
 
@@ -15,4 +14,3 @@ void rate_limiter_destroy(rate_limiter_t *limiter);
 bool rate_limiter_check(rate_limiter_t *limiter, const char *ip);
 
 #endif /* RATE_LIMIT_H */
-```
