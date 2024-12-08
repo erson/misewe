@@ -2,55 +2,63 @@
 #define SECURITY_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <time.h>
 
-/* Security context */
-typedef struct {
-    /* Memory limits */
-    size_t max_request_size;
-    size_t max_response_size;
-    
-    /* Rate limiting */
-    int max_requests_per_window;
-    int window_seconds;
-    
-    /* Request validation */
-    char allowed_methods[8][16];
-    size_t method_count;
-    char allowed_extensions[16][16];
-    size_t extension_count;
-    
-    /* Connection settings */
-    int timeout_seconds;
-    int max_header_count;
-    
-    /* IP blocking */
-    char **blocked_ips;
-    size_t blocked_count;
-    
-    /* Headers */
-    char **security_headers;
-    size_t header_count;
-} security_ctx_t;
-
-/* Request validation result */
+/* Security levels */
 typedef enum {
-    VALID_REQUEST = 0,
-    INVALID_METHOD = -1,
-    INVALID_PATH = -2,
-    INVALID_PROTOCOL = -3,
-    INVALID_HEADERS = -4,
-    RATE_LIMITED = -5,
-    IP_BLOCKED = -6
-} validation_result_t;
+    SECURITY_LOW,
+    SECURITY_MEDIUM,
+    SECURITY_HIGH,
+    SECURITY_PARANOID
+} security_level_t;
+
+/* Access control entry */
+typedef struct {
+    char ip[16];               /* IP address or CIDR */
+    uint32_t mask;            /* Network mask */
+    bool allow;               /* Allow or deny */
+    time_t expires;           /* Expiration time (0 = never) */
+} acl_entry_t;
+
+/* Security configuration */
+typedef struct {
+    security_level_t level;
+    struct {
+        size_t max_header_size;
+        size_t max_request_size;
+        size_t max_uri_length;
+        int max_headers;
+    } limits;
+    struct {
+        bool enable_xss_protection;
+        bool enable_csrf_protection;
+        bool enable_clickjacking_protection;
+        bool enable_hsts;
+        char *allowed_origins;
+    } headers;
+    struct {
+        acl_entry_t *entries;
+        size_t count;
+    } acl;
+    struct {
+        char *cert_file;
+        char *key_file;
+        bool verify_peer;
+        int min_version;      /* Minimum TLS version */
+    } tls;
+} security_config_t;
+
+/* Security context */
+typedef struct security_ctx security_ctx_t;
 
 /* Function prototypes */
-security_ctx_t *security_init(void);
-void security_cleanup(security_ctx_t *ctx);
-validation_result_t validate_request(security_ctx_t *ctx, const char *method, 
-                                   const char *path, const char *headers);
-int check_rate_limit(security_ctx_t *ctx, const char *ip);
-void add_security_headers(char *response, size_t size);
-int sanitize_input(char *buf, size_t size);
+security_ctx_t *security_create(const security_config_t *config);
+void security_destroy(security_ctx_t *ctx);
+bool security_check_request(security_ctx_t *ctx, const char *ip,
+                          const char *method, const char *uri,
+                          const char *headers);
+void security_add_response_headers(security_ctx_t *ctx, char *headers,
+                                 size_t size);
 
 #endif /* SECURITY_H */

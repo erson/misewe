@@ -1,231 +1,236 @@
+#include "security.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <time.h>
-#include "security.h"
-#include "logger.h"
+#include <pthread.h>
+#include <arpa/inet.h>
 
-/* Default security headers */
-static const char *default_headers[] = {
-    "X-Content-Type-Options: nosniff",
-    "X-Frame-Options: DENY",
-    "X-XSS-Protection: 1; mode=block",
-    "Content-Security-Policy: default-src 'self'",
-    "Strict-Transport-Security: max-age=31536000; includeSubDomains",
-    "Referrer-Policy: no-referrer",
-    "Permissions-Policy: geolocation=(), microphone=()",
-    "Cache-Control: no-store, no-cache, must-revalidate",
+/* Security context structure */
+struct security_ctx {
+    security_config_t config;
+    pthread_mutex_t lock;
+    struct {
+        char **patterns;
+        size_t count;
+    } blacklist;
+    uint64_t request_count;
+    time_t start_time;
+};
+
+/* Known attack patterns to block */
+static const char *attack_patterns[] = {
+    "../",              /* Directory traversal */
+    "<?",              /* PHP injection */
+    "<script",         /* XSS */
+    "UNION SELECT",    /* SQL injection */
+    "eval(",           /* Code injection */
+    ".htaccess",       /* Config access */
+    "/etc/passwd",     /* System file access */
+    "cmd=",            /* Command injection */
     NULL
 };
 
-/* Initialize security context with safe defaults */
-security_ctx_t *security_init(void) {
+/* Initialize security patterns */
+static bool init_security_patterns(security_ctx_t *ctx) {
+    size_t count = 0;
+    while (attack_patterns[count]) count++;
+
+    ctx->blacklist.patterns = calloc(count, sizeof(char*));
+    if (!ctx->blacklist.patterns) return false;
+
+    for (size_t i = 0; i < count; i++) {
+        ctx->blacklist.patterns[i] = strdup(attack_patterns[i]);
+        if (!ctx->blacklist.patterns[i]) {
+            for (size_t j = 0; j < i; j++) {
+                free(ctx->blacklist.patterns[j]);
+            }
+            free(ctx->blacklist.patterns);
+            return false;
+        }
+    }
+
+    ctx->blacklist.count = count;
+    return true;
+}
+
+/* Check if IP matches CIDR */
+static bool ip_matches_cidr(const char *ip_str, const char *cidr_str,
+                          uint32_t mask) {
+    struct in_addr ip, cidr;
+    if (inet_pton(AF_INET, ip_str, &ip) != 1 ||
+        inet_pton(AF_INET, cidr_str, &cidr) != 1) {
+        return false;
+    }
+
+    uint32_t ip_bits = ntohl(ip.s_addr);
+    uint32_t cidr_bits = ntohl(cidr.s_addr);
+    return (ip_bits & mask) == (cidr_bits & mask);
+}
+
+/* Check access control list */
+static bool check_acl(security_ctx_t *ctx, const char *ip) {
+    time_t now = time(NULL);
+    bool default_allow = (ctx->config.level <= SECURITY_MEDIUM);
+
+    for (size_t i = 0; i < ctx->config.acl.count; i++) {
+        acl_entry_t *entry = &ctx->config.acl.entries[i];
+        
+        /* Skip expired entries */
+        if (entry->expires && entry->expires < now) continue;
+
+        /* Check if IP matches */
+        if (ip_matches_cidr(ip, entry->ip, entry->mask)) {
+            return entry->allow;
+        }
+    }
+
+    return default_allow;
+}
+
+/* Sanitize and validate input */
+static bool is_input_safe(const char *input, size_t max_len) {
+    if (!input || strlen(input) > max_len) return false;
+
+    /* Check for control characters and non-ASCII */
+    for (const char *p = input; *p; p++) {
+        if (iscntrl(*p) || !isascii(*p)) return false;
+    }
+
+    return true;
+}
+
+/* Check for attack patterns */
+static bool contains_attack_pattern(security_ctx_t *ctx, const char *input) {
+    char *lower = strdup(input);
+    if (!lower) return true;  /* If in doubt, reject */
+
+    /* Convert to lowercase for comparison */
+    for (char *p = lower; *p; p++) {
+        *p = tolower(*p);
+    }
+
+    bool found = false;
+    for (size_t i = 0; i < ctx->blacklist.count; i++) {
+        if (strstr(lower, ctx->blacklist.patterns[i])) {
+            found = true;
+            break;
+        }
+    }
+
+    free(lower);
+    return found;
+}
+
+/* Create security context */
+security_ctx_t *security_create(const security_config_t *config) {
     security_ctx_t *ctx = calloc(1, sizeof(*ctx));
     if (!ctx) return NULL;
 
-    /* Set conservative limits */
-    ctx->max_request_size = 4096;
-    ctx->max_response_size = 1048576;  /* 1MB */
-    ctx->max_requests_per_window = 10;
-    ctx->window_seconds = 1;
-    ctx->timeout_seconds = 30;
-    ctx->max_header_count = 50;
+    /* Copy configuration */
+    ctx->config = *config;
 
-    /* Allow only GET method by default */
-    strncpy(ctx->allowed_methods[0], "GET", 15);
-    ctx->method_count = 1;
-
-    /* Set allowed file extensions */
-    strncpy(ctx->allowed_extensions[0], ".html", 15);
-    strncpy(ctx->allowed_extensions[1], ".txt", 15);
-    strncpy(ctx->allowed_extensions[2], ".css", 15);
-    strncpy(ctx->allowed_extensions[3], ".js", 15);
-    ctx->extension_count = 4;
-
-    /* Copy security headers */
-    size_t i;
-    for (i = 0; default_headers[i]; i++) {
-        ctx->security_headers = realloc(ctx->security_headers, 
-                                      (i + 1) * sizeof(char *));
-        ctx->security_headers[i] = strdup(default_headers[i]);
-        ctx->header_count++;
+    /* Initialize mutex */
+    if (pthread_mutex_init(&ctx->lock, NULL) != 0) {
+        free(ctx);
+        return NULL;
     }
 
+    /* Initialize security patterns */
+    if (!init_security_patterns(ctx)) {
+        pthread_mutex_destroy(&ctx->lock);
+        free(ctx);
+        return NULL;
+    }
+
+    ctx->start_time = time(NULL);
     return ctx;
 }
 
-/* Input sanitization */
-int sanitize_input(char *buf, size_t size) {
-    size_t i;
-    int modified = 0;
+/* Check security of HTTP request */
+bool security_check_request(security_ctx_t *ctx, const char *ip,
+                          const char *method, const char *uri,
+                          const char *headers) {
+    if (!ctx || !ip || !method || !uri || !headers) return false;
 
-    for (i = 0; i < size && buf[i]; i++) {
-        /* Remove control characters */
-        if (iscntrl(buf[i]) && buf[i] != '\r' && buf[i] != '\n') {
-            buf[i] = ' ';
-            modified = 1;
-            continue;
-        }
+    pthread_mutex_lock(&ctx->lock);
+    ctx->request_count++;
+    pthread_mutex_unlock(&ctx->lock);
 
-        /* Remove potential SQL injection characters */
-        if (buf[i] == '\'' || buf[i] == '"' || buf[i] == ';') {
-            buf[i] = ' ';
-            modified = 1;
-            continue;
-        }
-
-        /* Remove potential command injection characters */
-        if (buf[i] == '|' || buf[i] == '&' || buf[i] == '`') {
-            buf[i] = ' ';
-            modified = 1;
-            continue;
-        }
-
-        /* URL encode special characters */
-        if (!isalnum(buf[i]) && !strchr(".-_/", buf[i])) {
-            /* Basic characters are allowed through */
-            if (!strchr(" @,()[]{}+=", buf[i])) {
-                buf[i] = '_';
-                modified = 1;
-            }
-        }
+    /* Check ACL first */
+    if (!check_acl(ctx, ip)) {
+        return false;
     }
 
-    /* Ensure null termination */
-    if (size > 0) {
-        buf[size - 1] = '\0';
+    /* Basic input validation */
+    if (!is_input_safe(method, 16) ||
+        !is_input_safe(uri, ctx->config.limits.max_uri_length) ||
+        !is_input_safe(headers, ctx->config.limits.max_header_size)) {
+        return false;
     }
 
-    return modified;
-}
-
-/* Path validation with extended security checks */
-static int is_path_valid(const char *path) {
-    /* Check for NULL or empty path */
-    if (!path || !*path) return 0;
-
-    /* Check path length */
-    if (strlen(path) > 255) return 0;
-
-    /* Check for directory traversal */
-    if (strstr(path, "..")) return 0;
-    if (strstr(path, "//")) return 0;
-
-    /* Check for hidden files */
-    if (path[0] == '.') return 0;
-
-    /* Check for suspicious patterns */
-    const char *suspicious[] = {
-        "exec", "eval", "system", "cmd", "script",
-        "passwd", "shadow", "config", "php", "asp",
-        NULL
-    };
-
-    for (const char **s = suspicious; *s; s++) {
-        if (strcasestr(path, *s)) return 0;
+    /* Check for attack patterns */
+    if (contains_attack_pattern(ctx, uri) ||
+        contains_attack_pattern(ctx, headers)) {
+        return false;
     }
 
-    return 1;
-}
-
-/* Validate HTTP request */
-validation_result_t validate_request(security_ctx_t *ctx, const char *method,
-                                   const char *path, const char *headers) {
-    size_t i;
-    
-    /* Validate method */
-    int method_valid = 0;
-    for (i = 0; i < ctx->method_count; i++) {
-        if (strcasecmp(method, ctx->allowed_methods[i]) == 0) {
-            method_valid = 1;
-            break;
-        }
-    }
-    if (!method_valid) {
-        ERROR_LOG("Invalid method attempt: %s", method);
-        return INVALID_METHOD;
+    /* Method validation */
+    if (strcasecmp(method, "GET") != 0 &&
+        strcasecmp(method, "HEAD") != 0) {
+        return ctx->config.level < SECURITY_HIGH;
     }
 
-    /* Validate path */
-    if (!is_path_valid(path)) {
-        ERROR_LOG("Invalid path attempt: %s", path);
-        return INVALID_PATH;
-    }
-
-    /* Validate file extension */
-    const char *ext = strrchr(path, '.');
-    if (!ext) return INVALID_PATH;
-
-    int ext_valid = 0;
-    for (i = 0; i < ctx->extension_count; i++) {
-        if (strcasecmp(ext, ctx->allowed_extensions[i]) == 0) {
-            ext_valid = 1;
-            break;
-        }
-    }
-    if (!ext_valid) {
-        ERROR_LOG("Invalid extension attempt: %s", ext);
-        return INVALID_PATH;
-    }
-
-    /* Count headers */
-    size_t header_count = 0;
-    const char *ptr = headers;
-    while ((ptr = strchr(ptr, '\n'))) {
-        header_count++;
-        ptr++;
-        if (header_count > ctx->max_header_count) {
-            ERROR_LOG("Too many headers: %zu", header_count);
-            return INVALID_HEADERS;
-        }
-    }
-
-    return VALID_REQUEST;
+    return true;
 }
 
 /* Add security headers to response */
-void add_security_headers(char *response, size_t size) {
-    size_t pos = strlen(response);
-    size_t remaining = size - pos;
+void security_add_response_headers(security_ctx_t *ctx, char *headers,
+                                 size_t size) {
+    size_t pos = 0;
 
-    /* Add all security headers */
-    const char **header = default_headers;
-    while (*header && remaining > 0) {
-        int written = snprintf(response + pos, remaining, "%s\r\n", *header);
-        if (written > 0) {
-            pos += written;
-            remaining -= written;
-        }
-        header++;
+    /* Add standard security headers */
+    pos += snprintf(headers + pos, size - pos,
+        "X-Content-Type-Options: nosniff\r\n"
+        "X-Frame-Options: DENY\r\n"
+        "X-XSS-Protection: 1; mode=block\r\n"
+        "Content-Security-Policy: default-src 'self'\r\n");
+
+    /* Add optional headers based on configuration */
+    if (ctx->config.headers.enable_hsts) {
+        pos += snprintf(headers + pos, size - pos,
+            "Strict-Transport-Security: max-age=31536000; "
+            "includeSubDomains; preload\r\n");
     }
 
-    /* Add extra protection headers */
-    if (remaining > 0) {
-        snprintf(response + pos, remaining,
-                "Feature-Policy: "
-                "camera 'none'; "
-                "microphone 'none'; "
-                "geolocation 'none'; "
-                "payment 'none'\r\n");
+    if (ctx->config.headers.allowed_origins) {
+        pos += snprintf(headers + pos, size - pos,
+            "Access-Control-Allow-Origin: %s\r\n",
+            ctx->config.headers.allowed_origins);
+    }
+
+    /* Add server statistics for debugging if in low security mode */
+    if (ctx->config.level == SECURITY_LOW) {
+        pthread_mutex_lock(&ctx->lock);
+        pos += snprintf(headers + pos, size - pos,
+            "X-Request-Count: %lu\r\n"
+            "X-Uptime: %ld\r\n",
+            ctx->request_count,
+            time(NULL) - ctx->start_time);
+        pthread_mutex_unlock(&ctx->lock);
     }
 }
 
 /* Clean up security context */
-void security_cleanup(security_ctx_t *ctx) {
+void security_destroy(security_ctx_t *ctx) {
     if (!ctx) return;
 
-    /* Free security headers */
-    for (size_t i = 0; i < ctx->header_count; i++) {
-        free(ctx->security_headers[i]);
+    /* Free blacklist patterns */
+    for (size_t i = 0; i < ctx->blacklist.count; i++) {
+        free(ctx->blacklist.patterns[i]);
     }
-    free(ctx->security_headers);
+    free(ctx->blacklist.patterns);
 
-    /* Free blocked IPs */
-    for (size_t i = 0; i < ctx->blocked_count; i++) {
-        free(ctx->blocked_ips[i]);
-    }
-    free(ctx->blocked_ips);
-
+    pthread_mutex_destroy(&ctx->lock);
     free(ctx);
 }
