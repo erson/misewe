@@ -1,26 +1,37 @@
+```html
 <!DOCTYPE html>
 <html>
 <head>
     <title>Secure Server Test</title>
-    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background: #f0f0f0;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background: #e8f5e9;
+            border-radius: 4px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1>Secure Server Test Page</h1>
-        
-        <div class="status-panel">
+        <div class="status">
             <h2>Server Status</h2>
-            <div id="status"></div>
-        </div>
-        
-        <div class="test-panel">
-            <h2>Security Tests</h2>
-            <button onclick="testBasicAccess()">Test Basic Access</button>
-            <button onclick="testRateLimit()">Test Rate Limiting</button>
-            <button onclick="testPathTraversal()">Test Path Traversal</button>
-            <div id="results"></div>
+            <p>Connection: Active</p>
+            <p>Security: Enabled</p>
         </div>
     </div>
-    <script src="test.js"></script>
 </body>
 </html>
+```
