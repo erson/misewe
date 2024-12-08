@@ -21,8 +21,8 @@ typedef struct {
 
 /* Function prototypes */
 bool http_parse_request(const char *buffer, size_t length, http_request_t *req);
-void http_send_response(int client_fd, int status_code, 
-                       const char *content_type, 
+void http_send_response(int client_fd, int status_code,
+                       const char *content_type,
                        const void *body, size_t body_length);
 void http_send_error(int client_fd, int status_code, const char *message);
 

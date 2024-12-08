@@ -1,0 +1,18 @@
+# Build directories
+obj/
+bin/
+
+# Log files
+logs/
+*.log
+
+# OS files
+.DS_Store
+.vscode/
+*.swp
+*~
+
+# Build artifacts
+*.o
+*.a
+*.so

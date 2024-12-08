@@ -8,12 +8,12 @@ BIN_DIR = bin
 
 SRCS = $(wildcard $(SRC_DIR)/*.c)
 OBJS = $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-TARGET = $(BIN_DIR)/secure_server
+TARGET = $(BIN_DIR)/misewe
 
 all: setup $(TARGET)
 
 setup:
-	@mkdir -p $(OBJ_DIR) $(BIN_DIR) www logs
+	@mkdir -p $(OBJ_DIR) $(BIN_DIR) www
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
