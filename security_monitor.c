@@ -6,16 +6,12 @@
 
 #define MAX_EVENTS 1000
 #define MAX_IPS 10000
-#define WINDOW_SIZE 3600  /* 1 hour */
 
 /* IP tracking entry */
 typedef struct {
     char ip[16];
-    struct {
-        uint32_t requests;
-        uint32_t errors;
-        uint32_t attacks;
-    } counts;
+    uint32_t access_count;
+    uint32_t attack_count;
     time_t first_seen;
     time_t last_seen;
     bool blocked;
@@ -31,39 +27,6 @@ struct security_monitor {
     FILE *log_file;
 };
 
-/* Known attack patterns */
-static const struct {
-    const char *pattern;
-    attack_type_t type;
-} attack_patterns[] = {
-    /* SQL Injection */
-    {"'", ATTACK_INJECTION},
-    {"UNION SELECT", ATTACK_INJECTION},
-    {"OR 1=1", ATTACK_INJECTION},
-    
-    /* XSS */
-    {"<script", ATTACK_XSS},
-    {"javascript:", ATTACK_XSS},
-    {"onerror=", ATTACK_XSS},
-    
-    /* Path Traversal */
-    {"../", ATTACK_TRAVERSAL},
-    {"..\\", ATTACK_TRAVERSAL},
-    {"%2e%2e%2f", ATTACK_TRAVERSAL},
-    
-    /* Command Injection */
-    {";", ATTACK_INJECTION},
-    {"|", ATTACK_INJECTION},
-    {"$(", ATTACK_INJECTION},
-    
-    /* Scanner Detection */
-    {".php", ATTACK_SCAN},
-    {"wp-admin", ATTACK_SCAN},
-    {"admin.asp", ATTACK_SCAN},
-    
-    {NULL, ATTACK_NONE}
-};
-
 /* Create security monitor */
 security_monitor_t *monitor_create(void) {
     security_monitor_t *monitor = calloc(1, sizeof(*monitor));
@@ -76,7 +39,7 @@ security_monitor_t *monitor_create(void) {
         return NULL;
     }
 
-    /* Allocate IP tracking */
+    /* Allocate IP tracking array */
     monitor->ips = calloc(MAX_IPS, sizeof(ip_entry_t));
     if (!monitor->ips) {
         free(monitor->events);
@@ -126,99 +89,64 @@ static ip_entry_t *get_ip_entry(security_monitor_t *monitor,
 }
 
 /* Log security event */
-static void log_event(security_monitor_t *monitor,
-                     const security_event_t *event) {
-    /* Add to circular buffer */
-    size_t pos = monitor->event_count % MAX_EVENTS;
-    monitor->events[pos] = *event;
-    monitor->event_count++;
-
-    /* Write to log file */
-    if (monitor->log_file) {
-        time_t now = time(NULL);
-        char timestamp[64];
-        strftime(timestamp, sizeof(timestamp),
-                "%Y-%m-%d %H:%M:%S",
-                localtime(&now));
-
-        fprintf(monitor->log_file,
-                "[%s] [%s] %s: %s\n",
-                timestamp,
-                event->level == ALERT_CRITICAL ? "CRITICAL" :
-                event->level == ALERT_WARNING ? "WARNING" : "INFO",
-                event->source_ip,
-                event->details);
-    }
-}
-
-/* Check request for attacks */
-static attack_type_t detect_attack(const char *method,
-                                 const char *path,
-                                 const char *query,
-                                 const char *headers) {
-    /* Check each pattern */
-    for (size_t i = 0; attack_patterns[i].pattern; i++) {
-        if (strstr(path, attack_patterns[i].pattern) ||
-            (query && strstr(query, attack_patterns[i].pattern)) ||
-            strstr(headers, attack_patterns[i].pattern)) {
-            return attack_patterns[i].type;
-        }
-    }
-
-    return ATTACK_NONE;
-}
-
-/* Monitor request */
-void monitor_request(security_monitor_t *monitor,
-                    const char *ip,
-                    const char *method,
-                    const char *path,
-                    const char *query,
-                    const char *headers) {
+void monitor_log_event(security_monitor_t *monitor,
+                      event_type_t type,
+                      const char *ip,
+                      const char *details) {
     pthread_mutex_lock(&monitor->lock);
 
-    /* Get IP tracking */
-    ip_entry_t *entry = get_ip_entry(monitor, ip);
-    if (!entry) {
-        pthread_mutex_unlock(&monitor->lock);
-        return;
+    /* Update IP tracking */
+    ip_entry_t *ip_entry = get_ip_entry(monitor, ip);
+    if (ip_entry) {
+        switch (type) {
+            case EVENT_ACCESS:
+                ip_entry->access_count++;
+                break;
+            case EVENT_ATTACK:
+            case EVENT_DOS_ATTEMPT:
+                ip_entry->attack_count++;
+                /* Block IP after too many attacks */
+                if (ip_entry->attack_count > 10) {
+                    ip_entry->blocked = true;
+                }
+                break;
+            default:
+                break;
+        }
     }
 
-    /* Update request count */
-    entry->counts.requests++;
+    /* Add to event buffer */
+    size_t pos = monitor->event_count % MAX_EVENTS;
+    security_event_t *event = &monitor->events[pos];
 
-    /* Check for attacks */
-    attack_type_t attack = detect_attack(method, path, query, headers);
-    if (attack != ATTACK_NONE) {
-        entry->counts.attacks++;
+    event->type = type;
+    strncpy(event->ip, ip, sizeof(event->ip) - 1);
+    strncpy(event->details, details, sizeof(event->details) - 1);
+    event->timestamp = time(NULL);
 
-        /* Create security event */
-        security_event_t event = {
-            .type = attack,
-            .level = entry->counts.attacks > 5 ? ALERT_CRITICAL :
-                    entry->counts.attacks > 2 ? ALERT_WARNING : ALERT_INFO,
-            .timestamp = time(NULL)
-        };
-        strncpy(event.source_ip, ip, sizeof(event.source_ip) - 1);
-        snprintf(event.details, sizeof(event.details),
-                "Attack detected in %s: %s",
-                method, path);
+    monitor->event_count++;
 
-        /* Log event */
-        log_event(monitor, &event);
-
-        /* Block IP if too many attacks */
-        if (entry->counts.attacks > 10) {
-            entry->blocked = true;
-        }
+    /* Log to file */
+    if (monitor->log_file) {
+        fprintf(monitor->log_file, "[%ld] [%s] %s: %s\n",
+                (long)event->timestamp,
+                event->type == EVENT_ACCESS ? "ACCESS" :
+                event->type == EVENT_AUTH_FAILURE ? "AUTH" :
+                event->type == EVENT_ATTACK ? "ATTACK" :
+                event->type == EVENT_DOS_ATTEMPT ? "DOS" :
+                "ANOMALY",
+                event->ip,
+                event->details);
     }
 
     pthread_mutex_unlock(&monitor->lock);
 }
 
 /* Check if IP is allowed */
-bool monitor_check_ip(security_monitor_t *monitor, const char *ip) {
+bool monitor_check_ip(security_monitor_t *monitor,
+                     const char *ip) {
     bool allowed = true;
+
     pthread_mutex_lock(&monitor->lock);
 
     ip_entry_t *entry = get_ip_entry(monitor, ip);
