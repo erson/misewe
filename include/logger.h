@@ -7,7 +7,7 @@ typedef enum {
     LOG_ERROR
 } log_level_t;
 
-void log_init(const char *access_log, const char *error_log);
+void log_init(void);
 void log_write(log_level_t level, const char *format, ...);
 void log_cleanup(void);
 
