@@ -1,4 +1,5 @@
 #include "server.h"
+#include "http.h"
 #include <stdbool.h>
 #include <string.h>
 #include <strings.h>
@@ -10,6 +11,8 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 /* Server context structure */
 struct server {
@@ -101,8 +104,73 @@ static void *handle_client(void *arg) {
     int client_fd = *(int*)arg;
     free(arg);
 
-    /* TODO: Implement request handling */
-    
+    char buffer[4096];
+    ssize_t bytes = read(client_fd, buffer, sizeof(buffer) - 1);
+    if (bytes <= 0) {
+        close(client_fd);
+        return NULL;
+    }
+    buffer[bytes] = '\0';
+
+    /* Parse HTTP request */
+    http_request_t req;
+    if (!http_parse_request(buffer, bytes, &req)) {
+        http_send_error(client_fd, 400, "Bad Request");
+        close(client_fd);
+        return NULL;
+    }
+
+    /* Validate file type */
+    if (!is_allowed_file_type(req.path)) {
+        http_send_error(client_fd, 403, "Forbidden");
+        close(client_fd);
+        return NULL;
+    }
+
+    /* Build file path */
+    char filepath[512] = "www";  // Assuming 'www' is the web root
+    strncat(filepath, req.path, sizeof(filepath) - 4);  // -4 for "www" and null terminator
+
+    /* Open and send file */
+    int fd = open(filepath, O_RDONLY);
+    if (fd < 0) {
+        http_send_error(client_fd, 404, "Not Found");
+        close(client_fd);
+        return NULL;
+    }
+
+    /* Get file size */
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        close(fd);
+        http_send_error(client_fd, 500, "Internal Server Error");
+        close(client_fd);
+        return NULL;
+    }
+
+    /* Read and send file */
+    char *content = malloc(st.st_size);
+    if (!content) {
+        close(fd);
+        http_send_error(client_fd, 500, "Internal Server Error");
+        close(client_fd);
+        return NULL;
+    }
+
+    if (read(fd, content, st.st_size) != st.st_size) {
+        free(content);
+        close(fd);
+        http_send_error(client_fd, 500, "Internal Server Error");
+        close(client_fd);
+        return NULL;
+    }
+
+    /* Send response */
+    http_send_response(client_fd, 200, "text/html", content, st.st_size);
+
+    /* Clean up */
+    free(content);
+    close(fd);
     close(client_fd);
     return NULL;
 }

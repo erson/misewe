@@ -1,18 +1,52 @@
 # Build directories
-obj/
 bin/
+obj/
 
-# Log files
-logs/
-*.log
+# Prerequisites
+*.d
 
-# OS files
-.DS_Store
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Editor files
 .vscode/
+.idea/
 *.swp
 *~
 
-# Build artifacts
-*.o
-*.a
-*.so
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
