@@ -1,27 +1,8 @@
-```html
 <!DOCTYPE html>
 <html>
 <head>
     <title>Secure Server Test</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 40px;
-            background: #f0f0f0;
-        }
-        .container {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .status {
-            margin-top: 20px;
-            padding: 10px;
-            background: #e8f5e9;
-            border-radius: 4px;
-        }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
@@ -29,9 +10,16 @@
         <div class="status">
             <h2>Server Status</h2>
             <p>Connection: Active</p>
-            <p>Security: Enabled</p>
+            <p>Security Level: High</p>
+        </div>
+        <div class="auth">
+            <h2>Authentication Test</h2>
+            <form action="/login" method="POST">
+                <input type="text" name="username" placeholder="Username">
+                <input type="password" name="password" placeholder="Password">
+                <button type="submit">Login</button>
+            </form>
         </div>
     </div>
 </body>
 </html>
-```

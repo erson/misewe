@@ -15,38 +15,41 @@ body {
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
 }
 
-.status-panel, .test-panel {
+.status, .auth {
     margin: 20px 0;
     padding: 15px;
     border-radius: 4px;
 }
 
-.status-panel {
+.status {
     background: #e3f2fd;
 }
 
-.test-panel {
+.auth {
     background: #f5f5f5;
+}
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+input {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
 }
 
 button {
     padding: 8px 16px;
-    margin: 5px;
-    border: none;
-    border-radius: 4px;
     background: #2196f3;
     color: white;
+    border: none;
+    border-radius: 4px;
     cursor: pointer;
 }
 
 button:hover {
     background: #1976d2;
-}
-
-#results {
-    margin-top: 15px;
-    padding: 10px;
-    background: #fff;
-    border-radius: 4px;
-    border: 1px solid #ddd;
 }

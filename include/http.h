@@ -1,7 +1,7 @@
 #ifndef HTTP_H
 #define HTTP_H
 
-#include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 /* HTTP Methods */
@@ -16,8 +16,13 @@ typedef enum {
 typedef struct {
     http_method_t method;
     char path[256];
+    char query[256];
     char version[16];
-    size_t content_length;
+    struct {
+        char name[32];
+        char value[256];
+    } headers[32];
+    size_t header_count;
 } http_request_t;
 
 /* HTTP Response */
@@ -32,5 +37,6 @@ typedef struct {
 bool http_parse_request(const char *buffer, size_t length, http_request_t *req);
 void http_send_response(int client_fd, const http_response_t *resp);
 void http_send_error(int client_fd, int status_code, const char *message);
+void http_send_auth_required(int client_fd);
 
 #endif /* HTTP_H */
