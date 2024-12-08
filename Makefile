@@ -17,10 +17,10 @@ OBJS = $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 TARGET = $(BIN_DIR)/secure_server
 
 # Default target
-all: dirs $(TARGET)
+all: setup $(TARGET)
 
 # Create necessary directories
-dirs:
+setup:
 	@mkdir -p $(OBJ_DIR) $(BIN_DIR) www logs
 
 # Link the final binary
@@ -33,19 +33,10 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 
 # Clean build files
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_DIR)/* $(BIN_DIR)/*
 
 # Run the server
 run: all
 	./$(BIN_DIR)/secure_server
 
-# Install dependencies (Debian/Ubuntu)
-deps:
-	sudo apt-get update
-	sudo apt-get install -y build-essential
-
-# Run tests
-test: all
-	./test/run_tests.sh
-
-.PHONY: all clean run deps test dirs
+.PHONY: all clean run setup
