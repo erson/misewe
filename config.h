@@ -2,27 +2,26 @@
 #define CONFIG_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
+/* Server configuration */
 typedef struct {
-    uint16_t port;
-    char bind_addr[16];
-    size_t max_request_size;
-    size_t max_clients;
-    int requests_per_second;
-    int timeout_seconds;
-    char log_file[256];
+    uint16_t port;              /* Server port */
+    char bind_addr[16];         /* Bind address */
+    char root_dir[256];         /* Web root directory */
+    size_t max_clients;         /* Maximum concurrent clients */
+    size_t max_request_size;    /* Maximum request size in bytes */
+    int timeout_sec;           /* Client timeout in seconds */
     struct {
-        int enabled;
-        char cert_file[256];
-        char key_file[256];
-    } ssl;
-    struct {
-        char allowed_extensions[16][16];
-        size_t count;
+        char allowed_exts[16][8];  /* Allowed file extensions */
+        size_t ext_count;
     } security;
-} server_config_t;
+    bool daemon;               /* Run as daemon */
+} config_t;
 
-server_config_t *config_load(const char *filename);
-void config_free(server_config_t *config);
+/* Function prototypes */
+config_t *config_load(const char *filename);
+void config_free(config_t *cfg);
+bool config_validate(const config_t *cfg);
 
 #endif /* CONFIG_H */

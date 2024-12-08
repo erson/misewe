@@ -1,387 +1,253 @@
+#include "server.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <fcntl.h>
-#include <time.h>
-#include "server.h"
-
-/* HTTP status codes */
-#define HTTP_OK          200
-#define HTTP_BAD_REQ     400
-#define HTTP_FORBIDDEN   403
-#define HTTP_NOT_FOUND   404
-#define HTTP_RATE_LIMIT  429
-#define HTTP_ERROR       500
-
-/* Rate limiter implementation */
-struct rate_limiter {
-    struct {
-        char addr[16];
-        time_t hits[REQ_PER_SEC];
-        size_t count;
-    } clients[MAX_CLIENTS];
-    size_t count;
-};
-
-/* HTTP request structure */
-struct http_request {
-    char method[8];
-    char path[256];
-    char version[16];
-};
+#include <netinet/tcp.h>
 
 /* Static function declarations */
-static server_err_t setup_socket(uint16_t port);
-static server_err_t accept_client(server_ctx_t *ctx);
-static server_err_t handle_client(client_ctx_t *client);
-static void send_response(int fd, int status, const char *content_type, const void *body, size_t len);
-static void send_error(int fd, int status, const char *message);
-static int check_rate_limit(rate_limiter_t *limiter, const char *addr);
-static int is_valid_path(const char *path);
-static const char *get_content_type(const char *path);
-static void cleanup_client(client_ctx_t *client);
+static void handle_signal(int sig);
+static void *handle_client(void *arg);
+static bool setup_socket(server_t *server);
+static bool accept_client(server_t *server);
+static void cleanup_client(client_t *client);
 
-/* Global server instance for signal handling */
-static server_ctx_t *g_server = NULL;
+/* Global server reference for signal handling */
+static server_t *g_server = NULL;
 
 /* Signal handler */
 static void handle_signal(int sig) {
     (void)sig;  /* Unused parameter */
     if (g_server) {
-        g_server->running = 0;
+        atomic_store(&g_server->running, false);
     }
 }
 
 /* Create server context */
-server_ctx_t *server_create(uint16_t port) {
-    server_ctx_t *ctx = calloc(1, sizeof(*ctx));
-    if (!ctx) {
+server_t *server_create(const config_t *config) {
+    if (!config || !config_validate(config)) {
         return NULL;
     }
 
-    ctx->port = port;
-    ctx->running = 1;
-    ctx->limiter = calloc(1, sizeof(*ctx->limiter));
-    if (!ctx->limiter) {
-        free(ctx);
+    server_t *server = calloc(1, sizeof(*server));
+    if (!server) {
         return NULL;
     }
+
+    /* Initialize server context */
+    server->config = config_load(NULL);  /* Create copy of config */
+    if (!server->config) {
+        free(server);
+        return NULL;
+    }
+
+    /* Allocate client array */
+    server->clients = calloc(config->max_clients, sizeof(client_t));
+    if (!server->clients) {
+        config_free(server->config);
+        free(server);
+        return NULL;
+    }
+
+    /* Initialize mutex */
+    if (pthread_mutex_init(&server->lock, NULL) != 0) {
+        free(server->clients);
+        config_free(server->config);
+        free(server);
+        return NULL;
+    }
+
+    atomic_init(&server->running, true);
+    g_server = server;
 
     /* Set up signal handlers */
-    g_server = ctx;
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
+    signal(SIGPIPE, SIG_IGN);  /* Ignore SIGPIPE */
 
-    return ctx;
-}
-
-/* Destroy server context */
-void server_destroy(server_ctx_t *ctx) {
-    if (!ctx) return;
-    
-    if (ctx->fd > 0) {
-        close(ctx->fd);
-    }
-    free(ctx->limiter);
-    free(ctx);
-    g_server = NULL;
+    return server;
 }
 
 /* Set up server socket */
-static server_err_t setup_socket(uint16_t port) {
-    int fd;
-    struct sockaddr_in addr = {0};
-    int opt = 1;
-
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return SERVER_ERROR;
+static bool setup_socket(server_t *server) {
+    /* Create socket */
+    server->fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if (server->fd < 0) {
+        perror("socket");
+        return false;
     }
 
     /* Set socket options */
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    int opt = 1;
+    setsockopt(server->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(server->fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
-    /* Set receive/send timeouts */
-    struct timeval tv = {
-        .tv_sec = TIMEOUT_SEC,
-        .tv_usec = 0
-    };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    /* Bind to localhost only */
+    /* Set up address */
+    struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port = htons(port);
+    addr.sin_port = htons(server->config->port);
+    inet_pton(AF_INET, server->config->bind_addr, &addr.sin_addr);
 
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(fd);
-        return SERVER_ERROR;
+    /* Bind socket */
+    if (bind(server->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(server->fd);
+        return false;
     }
 
-    if (listen(fd, SERVER_BACKLOG) < 0) {
-        close(fd);
-        return SERVER_ERROR;
+    /* Listen for connections */
+    if (listen(server->fd, SOMAXCONN) < 0) {
+        perror("listen");
+        close(server->fd);
+        return false;
     }
 
-    return fd;
+    return true;
 }
 
-/* Check rate limit for client */
-static int check_rate_limit(rate_limiter_t *limiter, const char *addr) {
-    time_t now = time(NULL);
-    size_t i;
+/* Accept new client connection */
+static bool accept_client(server_t *server) {
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
 
-    /* Find existing client */
-    for (i = 0; i < limiter->count; i++) {
-        if (strcmp(limiter->clients[i].addr, addr) == 0) {
-            size_t valid = 0;
-            
-            /* Count valid hits within last second */
-            for (size_t j = 0; j < limiter->clients[i].count; j++) {
-                if (now - limiter->clients[i].hits[j] <= 1) {
-                    limiter->clients[i].hits[valid++] = limiter->clients[i].hits[j];
-                }
-            }
-            
-            limiter->clients[i].count = valid;
-            
-            /* Check if limit exceeded */
-            if (valid >= REQ_PER_SEC) {
-                return 0;
-            }
+    /* Accept connection */
+    int client_fd = accept4(server->fd, (struct sockaddr*)&addr, 
+                           &addr_len, SOCK_NONBLOCK);
+    if (client_fd < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            perror("accept");
+        }
+        return false;
+    }
 
-            /* Add new hit */
-            limiter->clients[i].hits[valid] = now;
-            limiter->clients[i].count++;
-            return 1;
+    /* Lock server */
+    pthread_mutex_lock(&server->lock);
+
+    /* Find free client slot */
+    client_t *client = NULL;
+    for (size_t i = 0; i < server->config->max_clients; i++) {
+        if (!server->clients[i].active) {
+            client = &server->clients[i];
+            break;
         }
     }
 
-    /* Add new client if space available */
-    if (limiter->count < MAX_CLIENTS) {
-        i = limiter->count++;
-        strncpy(limiter->clients[i].addr, addr, sizeof(limiter->clients[i].addr) - 1);
-        limiter->clients[i].hits[0] = now;
-        limiter->clients[i].count = 1;
-        return 1;
+    /* Check if server is full */
+    if (!client) {
+        pthread_mutex_unlock(&server->lock);
+        close(client_fd);
+        return false;
     }
 
-    return 0;
-}
+    /* Initialize client context */
+    memset(client, 0, sizeof(*client));
+    client->fd = client_fd;
+    client->server = server;
+    client->active = true;
+    client->connected_at = time(NULL);
+    inet_ntop(AF_INET, &addr.sin_addr, client->addr, sizeof(client->addr));
 
-/* Validate request path */
-static int is_valid_path(const char *path) {
-    static const char *allowed_ext[] = {".html", ".txt", ".css", ".js"};
-    const char *ext;
-    size_t i;
-
-    /* Check for path traversal */
-    if (strstr(path, "..") || path[0] == '/') {
-        return 0;
+    /* Create client thread */
+    if (pthread_create(&client->thread, NULL, handle_client, client) != 0) {
+        client->active = false;
+        pthread_mutex_unlock(&server->lock);
+        close(client_fd);
+        return false;
     }
 
-    /* Get file extension */
-    ext = strrchr(path, '.');
-    if (!ext) {
-        return 0;
-    }
-
-    /* Check if extension is allowed */
-    for (i = 0; i < sizeof(allowed_ext)/sizeof(allowed_ext[0]); i++) {
-        if (strcmp(ext, allowed_ext[i]) == 0) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-/* Get content type based on file extension */
-static const char *get_content_type(const char *path) {
-    const char *ext = strrchr(path, '.');
-    if (!ext) return "text/plain";
-
-    if (strcmp(ext, ".html") == 0) return "text/html";
-    if (strcmp(ext, ".css") == 0) return "text/css";
-    if (strcmp(ext, ".js") == 0) return "application/javascript";
-    return "text/plain";
-}
-
-/* Send HTTP response */
-static void send_response(int fd, int status, const char *content_type, 
-                         const void *body, size_t len) {
-    char header[BUF_SIZE];
-    int header_len;
-
-    header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 %d %s\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
-        "X-Content-Type-Options: nosniff\r\n"
-        "X-Frame-Options: DENY\r\n"
-        "Content-Security-Policy: default-src 'self'\r\n"
-        "\r\n",
-        status,
-        status == HTTP_OK ? "OK" : "Error",
-        content_type,
-        len);
-
-    write(fd, header, header_len);
-    if (body && len) {
-        write(fd, body, len);
-    }
-}
-
-/* Send HTTP error response */
-static void send_error(int fd, int status, const char *message) {
-    send_response(fd, status, "text/plain", message, strlen(message));
+    server->client_count++;
+    pthread_mutex_unlock(&server->lock);
+    return true;
 }
 
 /* Handle client connection */
-static server_err_t handle_client(client_ctx_t *client) {
-    char buffer[BUF_SIZE];
-    ssize_t bytes;
-    int fd;
-    struct stat st;
-    char *content;
+static void *handle_client(void *arg) {
+    client_t *client = arg;
+    server_t *server = client->server;
 
-    /* Read request */
-    bytes = read(client->fd, buffer, sizeof(buffer) - 1);
-    if (bytes <= 0) {
-        return SERVER_ERROR;
-    }
-    buffer[bytes] = '\0';
+    /* Set socket timeout */
+    struct timeval tv = {
+        .tv_sec = server->config->timeout_sec,
+        .tv_usec = 0
+    };
+    setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(client->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-    /* Parse request */
-    if (sscanf(buffer, "%7s %255s %15s",
-               client->request->method,
-               client->request->path,
-               client->request->version) != 3) {
-        send_error(client->fd, HTTP_BAD_REQ, "Bad Request");
-        return SERVER_ERROR;
+    /* Handle client requests */
+    while (atomic_load(&server->running)) {
+        /* TODO: Implement request handling */
+        break;  /* For now, just handle one request */
     }
 
-    /* Only allow GET method */
-    if (strcmp(client->request->method, "GET") != 0) {
-        send_error(client->fd, HTTP_BAD_REQ, "Method Not Allowed");
-        return SERVER_ERROR;
-    }
-
-    /* Validate path */
-    if (!is_valid_path(client->request->path)) {
-        send_error(client->fd, HTTP_FORBIDDEN, "Forbidden");
-        return SERVER_ERROR;
-    }
-
-    /* Open and read file */
-    fd = open(client->request->path, O_RDONLY);
-    if (fd < 0) {
-        send_error(client->fd, HTTP_NOT_FOUND, "Not Found");
-        return SERVER_ERROR;
-    }
-
-    /* Get file size */
-    if (fstat(fd, &st) < 0) {
-        close(fd);
-        send_error(client->fd, HTTP_ERROR, "Internal Error");
-        return SERVER_ERROR;
-    }
-
-    /* Allocate buffer for file content */
-    content = malloc(st.st_size);
-    if (!content) {
-        close(fd);
-        send_error(client->fd, HTTP_ERROR, "Internal Error");
-        return SERVER_ERROR;
-    }
-
-    /* Read file content */
-    if (read(fd, content, st.st_size) != st.st_size) {
-        free(content);
-        close(fd);
-        send_error(client->fd, HTTP_ERROR, "Internal Error");
-        return SERVER_ERROR;
-    }
-    close(fd);
-
-    /* Send response */
-    send_response(client->fd, HTTP_OK, 
-                 get_content_type(client->request->path),
-                 content, st.st_size);
-    free(content);
-
-    return SERVER_OK;
+    cleanup_client(client);
+    return NULL;
 }
 
-/* Accept and handle client connection */
-static server_err_t accept_client(server_ctx_t *ctx) {
-    struct sockaddr_in addr;
-    socklen_t addr_len = sizeof(addr);
-    client_ctx_t client = {0};
-    http_request_t request = {0};
+/* Clean up client resources */
+static void cleanup_client(client_t *client) {
+    if (!client->active) return;
 
-    /* Accept connection */
-    client.fd = accept(ctx->fd, (struct sockaddr*)&addr, &addr_len);
-    if (client.fd < 0) {
-        return SERVER_ERROR;
-    }
+    close(client->fd);
+    client->active = false;
 
-    /* Get client IP address */
-    inet_ntop(AF_INET, &addr.sin_addr, client.addr, sizeof(client.addr));
-
-    /* Check rate limit */
-    if (!check_rate_limit(ctx->limiter, client.addr)) {
-        send_error(client.fd, HTTP_RATE_LIMIT, "Rate Limit Exceeded");
-        close(client.fd);
-        return SERVER_ERROR;
-    }
-
-    /* Set client context */
-    client.timestamp = time(NULL);
-    client.request = &request;
-
-    /* Handle client request */
-    handle_client(&client);
-    close(client.fd);
-
-    return SERVER_OK;
+    pthread_mutex_lock(&client->server->lock);
+    client->server->client_count--;
+    pthread_mutex_unlock(&client->server->lock);
 }
 
-/* Run server */
-server_err_t server_run(server_ctx_t *ctx) {
-    if (!ctx) {
-        return SERVER_INVALID;
-    }
+/* Start server */
+bool server_start(server_t *server) {
+    if (!server) return false;
 
     /* Set up server socket */
-    ctx->fd = setup_socket(ctx->port);
-    if (ctx->fd < 0) {
-        return SERVER_ERROR;
+    if (!setup_socket(server)) {
+        return false;
     }
 
-    printf("Server running on port %d\n", ctx->port);
+    printf("Server listening on %s:%d\n", 
+           server->config->bind_addr, 
+           server->config->port);
 
     /* Main server loop */
-    while (ctx->running) {
-        accept_client(ctx);
+    while (atomic_load(&server->running)) {
+        accept_client(server);
+        usleep(1000);  /* Small sleep to prevent busy loop */
     }
 
-    return SERVER_OK;
+    return true;
 }
 
 /* Stop server */
-void server_stop(server_ctx_t *ctx) {
-    if (ctx) {
-        ctx->running = 0;
+void server_stop(server_t *server) {
+    if (!server) return;
+    atomic_store(&server->running, false);
+
+    /* Wait for clients to finish */
+    for (size_t i = 0; i < server->config->max_clients; i++) {
+        if (server->clients[i].active) {
+            pthread_join(server->clients[i].thread, NULL);
+        }
     }
+}
+
+/* Clean up server resources */
+void server_destroy(server_t *server) {
+    if (!server) return;
+
+    server_stop(server);
+    close(server->fd);
+
+    pthread_mutex_destroy(&server->lock);
+    free(server->clients);
+    config_free(server->config);
+    free(server);
+
+    g_server = NULL;
 }
