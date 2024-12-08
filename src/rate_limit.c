@@ -3,7 +3,6 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
-#include <stddef.h>
 
 #define MAX_CLIENTS 10000
 
@@ -15,17 +14,21 @@ typedef struct {
 
 struct rate_limiter {
     unsigned int max_requests;
+    unsigned int window_seconds;
     client_entry_t *clients;
     size_t client_count;
     pthread_mutex_t lock;
 };
 
-rate_limiter_t *rate_limiter_create(unsigned int requests_per_minute) {
+rate_limiter_t *rate_limiter_create(unsigned int max_requests,
+                                   unsigned int window_seconds) {
     rate_limiter_t *limiter = calloc(1, sizeof(*limiter));
     if (!limiter) return NULL;
 
-    limiter->max_requests = requests_per_minute;
+    limiter->max_requests = max_requests;
+    limiter->window_seconds = window_seconds;
     limiter->clients = calloc(MAX_CLIENTS, sizeof(client_entry_t));
+
     if (!limiter->clients) {
         free(limiter);
         return NULL;
@@ -44,8 +47,8 @@ void rate_limiter_destroy(rate_limiter_t *limiter) {
 }
 
 bool rate_limiter_check(rate_limiter_t *limiter, const char *ip) {
-    time_t now = time(NULL);
     bool allowed = true;
+    time_t now = time(NULL);
 
     pthread_mutex_lock(&limiter->lock);
 
@@ -66,7 +69,7 @@ bool rate_limiter_check(rate_limiter_t *limiter, const char *ip) {
 
     if (client) {
         /* Reset window if needed */
-        if (now - client->window_start >= 60) {
+        if (now - client->window_start >= limiter->window_seconds) {
             client->count = 0;
             client->window_start = now;
         }
@@ -82,4 +85,3 @@ bool rate_limiter_check(rate_limiter_t *limiter, const char *ip) {
     pthread_mutex_unlock(&limiter->lock);
     return allowed;
 }
-```
