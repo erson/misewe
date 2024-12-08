@@ -2,235 +2,186 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <pthread.h>
-#include <arpa/inet.h>
+#include <ctype.h>
 
-/* Security context structure */
-struct security_ctx {
-    security_config_t config;
+#define MAX_CLIENTS 10000
+#define RATE_WINDOW 60  /* 1 minute */
+#define MAX_REQUESTS 60 /* requests per minute */
+
+/* Rate limiting state */
+static struct {
+    rate_limit_t *clients;
+    size_t count;
     pthread_mutex_t lock;
-    struct {
-        char **patterns;
-        size_t count;
-    } blacklist;
-    uint64_t request_count;
-    time_t start_time;
+} rate_limiter = {0};
+
+/* MIME type mappings */
+static const mime_type_t mime_types[] = {
+    {".html", "text/html"},
+    {".htm",  "text/html"},
+    {".css",  "text/css"},
+    {".js",   "application/javascript"},
+    {".json", "application/json"},
+    {".txt",  "text/plain"},
+    {".png",  "image/png"},
+    {".jpg",  "image/jpeg"},
+    {".jpeg", "image/jpeg"},
+    {".gif",  "image/gif"},
+    {NULL,    "application/octet-stream"}
 };
 
-/* Known attack patterns to block */
-static const char *attack_patterns[] = {
-    "../",              /* Directory traversal */
-    "<?",              /* PHP injection */
-    "<script",         /* XSS */
-    "UNION SELECT",    /* SQL injection */
-    "eval(",           /* Code injection */
-    ".htaccess",       /* Config access */
-    "/etc/passwd",     /* System file access */
-    "cmd=",            /* Command injection */
-    NULL
-};
-
-/* Initialize security patterns */
-static bool init_security_patterns(security_ctx_t *ctx) {
-    size_t count = 0;
-    while (attack_patterns[count]) count++;
-
-    ctx->blacklist.patterns = calloc(count, sizeof(char*));
-    if (!ctx->blacklist.patterns) return false;
-
-    for (size_t i = 0; i < count; i++) {
-        ctx->blacklist.patterns[i] = strdup(attack_patterns[i]);
-        if (!ctx->blacklist.patterns[i]) {
-            for (size_t j = 0; j < i; j++) {
-                free(ctx->blacklist.patterns[j]);
-            }
-            free(ctx->blacklist.patterns);
-            return false;
+/* Initialize rate limiter */
+static void init_rate_limiter(void) {
+    static bool initialized = false;
+    if (!initialized) {
+        rate_limiter.clients = calloc(MAX_CLIENTS, sizeof(rate_limit_t));
+        if (rate_limiter.clients) {
+            pthread_mutex_init(&rate_limiter.lock, NULL);
+            initialized = true;
         }
     }
-
-    ctx->blacklist.count = count;
-    return true;
 }
 
-/* Check if IP matches CIDR */
-static bool ip_matches_cidr(const char *ip_str, const char *cidr_str,
-                          uint32_t mask) {
-    struct in_addr ip, cidr;
-    if (inet_pton(AF_INET, ip_str, &ip) != 1 ||
-        inet_pton(AF_INET, cidr_str, &cidr) != 1) {
-        return false;
-    }
-
-    uint32_t ip_bits = ntohl(ip.s_addr);
-    uint32_t cidr_bits = ntohl(cidr.s_addr);
-    return (ip_bits & mask) == (cidr_bits & mask);
-}
-
-/* Check access control list */
-static bool check_acl(security_ctx_t *ctx, const char *ip) {
+/* Check if request should be allowed */
+bool check_rate_limit(const char *ip) {
+    init_rate_limiter();
+    bool allowed = true;
     time_t now = time(NULL);
-    bool default_allow = (ctx->config.level <= SECURITY_MEDIUM);
 
-    for (size_t i = 0; i < ctx->config.acl.count; i++) {
-        acl_entry_t *entry = &ctx->config.acl.entries[i];
-        
-        /* Skip expired entries */
-        if (entry->expires && entry->expires < now) continue;
+    pthread_mutex_lock(&rate_limiter.lock);
 
-        /* Check if IP matches */
-        if (ip_matches_cidr(ip, entry->ip, entry->mask)) {
-            return entry->allow;
-        }
-    }
-
-    return default_allow;
-}
-
-/* Sanitize and validate input */
-static bool is_input_safe(const char *input, size_t max_len) {
-    if (!input || strlen(input) > max_len) return false;
-
-    /* Check for control characters and non-ASCII */
-    for (const char *p = input; *p; p++) {
-        if (iscntrl(*p) || !isascii(*p)) return false;
-    }
-
-    return true;
-}
-
-/* Check for attack patterns */
-static bool contains_attack_pattern(security_ctx_t *ctx, const char *input) {
-    char *lower = strdup(input);
-    if (!lower) return true;  /* If in doubt, reject */
-
-    /* Convert to lowercase for comparison */
-    for (char *p = lower; *p; p++) {
-        *p = tolower(*p);
-    }
-
-    bool found = false;
-    for (size_t i = 0; i < ctx->blacklist.count; i++) {
-        if (strstr(lower, ctx->blacklist.patterns[i])) {
-            found = true;
+    /* Find or create client entry */
+    rate_limit_t *client = NULL;
+    for (size_t i = 0; i < rate_limiter.count; i++) {
+        if (strcmp(rate_limiter.clients[i].ip, ip) == 0) {
+            client = &rate_limiter.clients[i];
             break;
         }
     }
 
-    free(lower);
-    return found;
+    if (!client && rate_limiter.count < MAX_CLIENTS) {
+        client = &rate_limiter.clients[rate_limiter.count++];
+        strncpy(client->ip, ip, sizeof(client->ip) - 1);
+        client->requests = calloc(MAX_REQUESTS, sizeof(time_t));
+        client->count = 0;
+        client->window_start = now;
+    }
+
+    if (client && client->requests) {
+        /* Reset window if needed */
+        if (now - client->window_start >= RATE_WINDOW) {
+            client->count = 0;
+            client->window_start = now;
+        }
+
+        /* Check rate limit */
+        if (client->count >= MAX_REQUESTS) {
+            allowed = false;
+        } else {
+            client->requests[client->count++] = now;
+        }
+    }
+
+    pthread_mutex_unlock(&rate_limiter.lock);
+    return allowed;
 }
 
-/* Create security context */
-security_ctx_t *security_create(const security_config_t *config) {
-    security_ctx_t *ctx = calloc(1, sizeof(*ctx));
-    if (!ctx) return NULL;
-
-    /* Copy configuration */
-    ctx->config = *config;
-
-    /* Initialize mutex */
-    if (pthread_mutex_init(&ctx->lock, NULL) != 0) {
-        free(ctx);
-        return NULL;
+/* Get MIME type for file */
+const char *get_mime_type(const char *path) {
+    const char *ext = strrchr(path, '.');
+    if (ext) {
+        for (const mime_type_t *m = mime_types; m->ext; m++) {
+            if (strcasecmp(ext, m->ext) == 0) {
+                return m->mime_type;
+            }
+        }
     }
-
-    /* Initialize security patterns */
-    if (!init_security_patterns(ctx)) {
-        pthread_mutex_destroy(&ctx->lock);
-        free(ctx);
-        return NULL;
-    }
-
-    ctx->start_time = time(NULL);
-    return ctx;
+    return "application/octet-stream";
 }
 
-/* Check security of HTTP request */
-bool security_check_request(security_ctx_t *ctx, const char *ip,
-                          const char *method, const char *uri,
-                          const char *headers) {
-    if (!ctx || !ip || !method || !uri || !headers) return false;
+/* Validate path */
+bool is_path_safe(const char *path) {
+    /* Check for NULL or empty path */
+    if (!path || !*path) return false;
 
-    pthread_mutex_lock(&ctx->lock);
-    ctx->request_count++;
-    pthread_mutex_unlock(&ctx->lock);
+    /* Check length */
+    if (strlen(path) > 255) return false;
 
-    /* Check ACL first */
-    if (!check_acl(ctx, ip)) {
-        return false;
+    /* Check for path traversal */
+    if (strstr(path, "..")) return false;
+    if (strstr(path, "//")) return false;
+
+    /* Check for suspicious patterns */
+    static const char *suspicious[] = {
+        "php", "asp", "cgi", "pl", "py",
+        "exec", "bin", "sh", "cmd",
+        NULL
+    };
+
+    for (const char **s = suspicious; *s; s++) {
+        if (strstr(path, *s)) return false;
     }
 
-    /* Basic input validation */
-    if (!is_input_safe(method, 16) ||
-        !is_input_safe(uri, ctx->config.limits.max_uri_length) ||
-        !is_input_safe(headers, ctx->config.limits.max_header_size)) {
-        return false;
-    }
-
-    /* Check for attack patterns */
-    if (contains_attack_pattern(ctx, uri) ||
-        contains_attack_pattern(ctx, headers)) {
-        return false;
-    }
-
-    /* Method validation */
-    if (strcasecmp(method, "GET") != 0 &&
-        strcasecmp(method, "HEAD") != 0) {
-        return ctx->config.level < SECURITY_HIGH;
+    /* Check characters */
+    for (const char *p = path; *p; p++) {
+        if (!isalnum(*p) && !strchr("/-_.", *p)) {
+            return false;
+        }
     }
 
     return true;
 }
 
-/* Add security headers to response */
-void security_add_response_headers(security_ctx_t *ctx, char *headers,
-                                 size_t size) {
-    size_t pos = 0;
+/* Log access */
+void log_access(const char *ip, const char *method, const char *path, int status) {
+    static FILE *log_file = NULL;
+    static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-    /* Add standard security headers */
-    pos += snprintf(headers + pos, size - pos,
-        "X-Content-Type-Options: nosniff\r\n"
-        "X-Frame-Options: DENY\r\n"
-        "X-XSS-Protection: 1; mode=block\r\n"
-        "Content-Security-Policy: default-src 'self'\r\n");
+    pthread_mutex_lock(&log_mutex);
 
-    /* Add optional headers based on configuration */
-    if (ctx->config.headers.enable_hsts) {
-        pos += snprintf(headers + pos, size - pos,
-            "Strict-Transport-Security: max-age=31536000; "
-            "includeSubDomains; preload\r\n");
+    if (!log_file) {
+        log_file = fopen("access.log", "a");
+        if (log_file) {
+            setbuf(log_file, NULL);  /* Disable buffering */
+        }
     }
 
-    if (ctx->config.headers.allowed_origins) {
-        pos += snprintf(headers + pos, size - pos,
-            "Access-Control-Allow-Origin: %s\r\n",
-            ctx->config.headers.allowed_origins);
+    if (log_file) {
+        time_t now = time(NULL);
+        char timestamp[64];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S",
+                localtime(&now));
+
+        fprintf(log_file, "[%s] %s %s %s %d\n",
+                timestamp, ip, method, path, status);
     }
 
-    /* Add server statistics for debugging if in low security mode */
-    if (ctx->config.level == SECURITY_LOW) {
-        pthread_mutex_lock(&ctx->lock);
-        pos += snprintf(headers + pos, size - pos,
-            "X-Request-Count: %lu\r\n"
-            "X-Uptime: %ld\r\n",
-            ctx->request_count,
-            time(NULL) - ctx->start_time);
-        pthread_mutex_unlock(&ctx->lock);
-    }
+    pthread_mutex_unlock(&log_mutex);
 }
 
-/* Clean up security context */
-void security_destroy(security_ctx_t *ctx) {
-    if (!ctx) return;
+/* Log error */
+void log_error(const char *ip, const char *message) {
+    static FILE *log_file = NULL;
+    static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-    /* Free blacklist patterns */
-    for (size_t i = 0; i < ctx->blacklist.count; i++) {
-        free(ctx->blacklist.patterns[i]);
+    pthread_mutex_lock(&log_mutex);
+
+    if (!log_file) {
+        log_file = fopen("error.log", "a");
+        if (log_file) {
+            setbuf(log_file, NULL);  /* Disable buffering */
+        }
     }
-    free(ctx->blacklist.patterns);
 
-    pthread_mutex_destroy(&ctx->lock);
-    free(ctx);
+    if (log_file) {
+        time_t now = time(NULL);
+        char timestamp[64];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S",
+                localtime(&now));
+
+        fprintf(log_file, "[%s] %s %s\n", timestamp, ip, message);
+    }
+
+    pthread_mutex_unlock(&log_mutex);
 }
