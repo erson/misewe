@@ -5,16 +5,30 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>Welcome to Secure Server</h1>
-    <p>This is a test page.</p>
-    <div class="security-info">
-        <h2>Security Features:</h2>
-        <ul>
-            <li>Rate limiting</li>
-            <li>Path traversal prevention</li>
-            <li>Request validation</li>
-            <li>Security headers</li>
-        </ul>
+    <div class="container">
+        <h1>Welcome to Secure Server</h1>
+        <p>This is a test page served by our secure server.</p>
+        
+        <div class="security-info">
+            <h2>Security Features:</h2>
+            <ul>
+                <li>Rate limiting</li>
+                <li>Path traversal prevention</li>
+                <li>File type restrictions</li>
+                <li>Security headers</li>
+                <li>Request validation</li>
+            </ul>
+        </div>
+        
+        <div class="status">
+            <h2>Server Status:</h2>
+            <ul>
+                <li>Security Level: High</li>
+                <li>Rate Limit: 60 requests/minute</li>
+                <li>Maximum Request Size: 1MB</li>
+                <li>Allowed File Types: HTML, CSS, JS, TXT</li>
+            </ul>
+        </div>
     </div>
 </body>
 </html>
