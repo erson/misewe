@@ -3,15 +3,18 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <stddef.h>
 
 #define MAX_CLIENTS 10000
 
+/* Client tracking structure */
 typedef struct {
     char ip[16];
     unsigned int count;
     time_t window_start;
 } client_entry_t;
 
+/* Rate limiter context */
 struct rate_limiter {
     unsigned int max_requests;
     unsigned int window_seconds;
@@ -20,6 +23,7 @@ struct rate_limiter {
     pthread_mutex_t lock;
 };
 
+/* Create rate limiter */
 rate_limiter_t *rate_limiter_create(unsigned int max_requests,
                                    unsigned int window_seconds) {
     rate_limiter_t *limiter = calloc(1, sizeof(*limiter));
@@ -38,6 +42,7 @@ rate_limiter_t *rate_limiter_create(unsigned int max_requests,
     return limiter;
 }
 
+/* Clean up rate limiter */
 void rate_limiter_destroy(rate_limiter_t *limiter) {
     if (limiter) {
         pthread_mutex_destroy(&limiter->lock);
@@ -46,6 +51,7 @@ void rate_limiter_destroy(rate_limiter_t *limiter) {
     }
 }
 
+/* Check if request is allowed */
 bool rate_limiter_check(rate_limiter_t *limiter, const char *ip) {
     bool allowed = true;
     time_t now = time(NULL);
