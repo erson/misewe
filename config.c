@@ -1,108 +1,113 @@
+#include "config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-#include "config.h"
 
-/* Trim whitespace from string */
-static char *trim(char *str) {
-    char *end;
-    
-    while (isspace(*str)) str++;
-    if (*str == 0) return str;
-    
-    end = str + strlen(str) - 1;
-    while (end > str && isspace(*end)) end--;
-    *(end + 1) = '\0';
-    
-    return str;
-}
-
-/* Parse config line */
-static void parse_line(server_config_t *config, char *line) {
-    char *key, *value;
-    
-    key = trim(strtok(line, "="));
-    if (!key || *key == '#') return;
-    
-    value = trim(strtok(NULL, "\n"));
-    if (!value) return;
-    
-    if (strcmp(key, "port") == 0) {
-        config->port = (uint16_t)atoi(value);
-    }
-    else if (strcmp(key, "bind_addr") == 0) {
-        strncpy(config->bind_addr, value, sizeof(config->bind_addr) - 1);
-    }
-    else if (strcmp(key, "max_request_size") == 0) {
-        config->max_request_size = (size_t)atol(value);
-    }
-    else if (strcmp(key, "max_clients") == 0) {
-        config->max_clients = (size_t)atol(value);
-    }
-    else if (strcmp(key, "requests_per_second") == 0) {
-        config->requests_per_second = atoi(value);
-    }
-    else if (strcmp(key, "timeout_seconds") == 0) {
-        config->timeout_seconds = atoi(value);
-    }
-    else if (strcmp(key, "log_file") == 0) {
-        strncpy(config->log_file, value, sizeof(config->log_file) - 1);
-    }
-    else if (strcmp(key, "ssl_enabled") == 0) {
-        config->ssl.enabled = atoi(value);
-    }
-    else if (strcmp(key, "ssl_cert_file") == 0) {
-        strncpy(config->ssl.cert_file, value, sizeof(config->ssl.cert_file) - 1);
-    }
-    else if (strcmp(key, "ssl_key_file") == 0) {
-        strncpy(config->ssl.key_file, value, sizeof(config->ssl.key_file) - 1);
-    }
-    else if (strcmp(key, "allowed_extension") == 0) {
-        if (config->security.count < 16) {
-            strncpy(config->security.allowed_extensions[config->security.count++],
-                   value, 15);
-        }
-    }
-}
-
-server_config_t *config_load(const char *filename) {
-    FILE *fp;
-    char line[1024];
-    server_config_t *config;
-    
-    config = calloc(1, sizeof(*config));
-    if (!config) return NULL;
-    
-    /* Set defaults */
+/* Create default configuration */
+static void config_set_defaults(server_config_t *config) {
+    /* Network defaults */
     config->port = 8000;
     strcpy(config->bind_addr, "127.0.0.1");
-    config->max_request_size = 4096;
-    config->max_clients = 1000;
-    config->requests_per_second = 10;
-    config->timeout_seconds = 30;
-    strcpy(config->log_file, "server.log");
-    config->ssl.enabled = 0;
+    config->backlog = 10;
+    
+    /* Security defaults */
+    config->limits.max_requests_per_min = 60;
+    config->limits.max_connections = 1000;
+    config->limits.max_request_size = 1024 * 1024;  /* 1MB */
+    config->limits.max_header_size = 8192;
+    config->limits.timeout_seconds = 30;
+    
+    /* File defaults */
+    strcpy(config->root_dir, "./www");
     
     /* Default allowed extensions */
-    strcpy(config->security.allowed_extensions[0], ".html");
-    strcpy(config->security.allowed_extensions[1], ".txt");
-    strcpy(config->security.allowed_extensions[2], ".css");
-    strcpy(config->security.allowed_extensions[3], ".js");
-    config->security.count = 4;
+    strcpy(config->files.allowed_exts[0], ".html");
+    strcpy(config->files.allowed_exts[1], ".css");
+    strcpy(config->files.allowed_exts[2], ".js");
+    strcpy(config->files.allowed_exts[3], ".txt");
+    strcpy(config->files.allowed_exts[4], ".ico");
+    config->files.ext_count = 5;
     
-    /* Read config file */
-    fp = fopen(filename, "r");
-    if (!fp) return config;  /* Use defaults if file not found */
+    /* Logging defaults */
+    strcpy(config->access_log, "access.log");
+    strcpy(config->error_log, "error.log");
+    config->log_requests = true;
+    config->log_errors = true;
+}
+
+/* Load configuration from file */
+server_config_t *config_load(const char *filename) {
+    server_config_t *config = calloc(1, sizeof(*config));
+    if (!config) return NULL;
     
-    while (fgets(line, sizeof(line), fp)) {
-        parse_line(config, line);
+    /* Set defaults first */
+    config_set_defaults(config);
+    
+    /* Read configuration file if provided */
+    if (filename) {
+        FILE *f = fopen(filename, "r");
+        if (f) {
+            char line[512];
+            while (fgets(line, sizeof(line), f)) {
+                /* Remove newline */
+                char *nl = strchr(line, '\n');
+                if (nl) *nl = '\0';
+                
+                /* Skip comments and empty lines */
+                if (line[0] == '#' || line[0] == '\0') continue;
+                
+                /* Parse key=value pairs */
+                char *sep = strchr(line, '=');
+                if (sep) {
+                    *sep = '\0';
+                    char *key = line;
+                    char *value = sep + 1;
+                    
+                    /* Trim whitespace */
+                    while (*key && isspace(*key)) key++;
+                    while (*value && isspace(*value)) value++;
+                    
+                    /* Set configuration value */
+                    if (strcmp(key, "port") == 0) {
+                        config->port = atoi(value);
+                    }
+                    else if (strcmp(key, "bind_addr") == 0) {
+                        strncpy(config->bind_addr, value, sizeof(config->bind_addr) - 1);
+                    }
+                    else if (strcmp(key, "root_dir") == 0) {
+                        strncpy(config->root_dir, value, sizeof(config->root_dir) - 1);
+                    }
+                    /* Add more configuration options here */
+                }
+            }
+            fclose(f);
+        }
     }
     
-    fclose(fp);
     return config;
 }
 
+/* Validate configuration */
+bool config_validate(const server_config_t *config) {
+    if (!config) return false;
+    
+    /* Check port range */
+    if (config->port < 1 || config->port > 65535) return false;
+    
+    /* Check limits */
+    if (config->limits.max_request_size < 1024 ||
+        config->limits.max_request_size > 1024 * 1024 * 10) return false;
+        
+    if (config->limits.timeout_seconds < 1 ||
+        config->limits.timeout_seconds > 300) return false;
+        
+    /* Check root directory */
+    if (access(config->root_dir, R_OK) != 0) return false;
+    
+    return true;
+}
+
+/* Free configuration */
 void config_free(server_config_t *config) {
     free(config);
 }
