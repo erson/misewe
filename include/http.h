@@ -17,24 +17,13 @@ typedef struct {
     http_method_t method;
     char path[256];
     char version[16];
-    struct {
-        char name[32];
-        char value[256];
-    } headers[32];
-    size_t header_count;
 } http_request_t;
-
-/* HTTP Response */
-typedef struct {
-    int status_code;
-    const char *content_type;
-    const void *body;
-    size_t body_length;
-} http_response_t;
 
 /* Function prototypes */
 bool http_parse_request(const char *buffer, size_t length, http_request_t *req);
-void http_send_response(int client_fd, const http_response_t *resp);
+void http_send_response(int client_fd, int status_code, 
+                       const char *content_type, 
+                       const void *body, size_t body_length);
 void http_send_error(int client_fd, int status_code, const char *message);
 
 #endif /* HTTP_H */
