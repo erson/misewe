@@ -1,298 +1,219 @@
-# Secure Server Test Guide
+# Misewe Test Guide
 
-This document provides test procedures for all security features of the secure server.
+This document describes how to test the Misewe secure web server.
 
-## Table of Contents
-1. [Basic Functionality Tests](#basic-functionality-tests)
-2. [Security Feature Tests](#security-feature-tests)
-3. [Performance Tests](#performance-tests)
-4. [Attack Simulation Tests](#attack-simulation-tests)
-5. [Logging Tests](#logging-tests)
+## Prerequisites
 
-## Setup
+Make sure you have the following installed:
+- curl
+- netstat
+- bash
 
-First, build and start the server:
+## Basic Tests
+
+### 1. Start the Server
 ```bash
-# Build the server
 make clean
 make
-
-# Start the server
 ./bin/secure_server
 ```
 
-## Basic Functionality Tests
-
-### 1. Basic HTTP Request
+### 2. Run Test Suite
 ```bash
-# Test normal page access
-curl http://localhost:8000/index.html
-
-# Expected result: 200 OK with HTML content
+./test.sh
 ```
 
-### 2. Static File Types
+## Manual Testing
+
+### 1. Basic Access
 ```bash
-# Test HTML file
+# Test basic HTML access
 curl http://localhost:8000/index.html
 
 # Test CSS file
 curl http://localhost:8000/style.css
-
-# Test JavaScript file
-curl http://localhost:8000/script.js
-
-# All should return 200 OK with appropriate content
 ```
 
-## Security Feature Tests
+### 2. Security Features
 
-### 1. Path Traversal Prevention
+#### Path Traversal Prevention
 ```bash
-# Test directory traversal
+# Should return 403 Forbidden
 curl http://localhost:8000/../etc/passwd
-# Expected: 403 Forbidden
-
-# Test encoded traversal
 curl http://localhost:8000/..%2f..%2fetc%2fpasswd
-# Expected: 403 Forbidden
-
-# Test multiple slashes
-curl http://localhost:8000////etc/passwd
-# Expected: 403 Forbidden
 ```
 
-### 2. Rate Limiting
+#### File Type Restrictions
 ```bash
-# Test rapid requests
+# Should return 403 Forbidden
+curl http://localhost:8000/test.php
+curl http://localhost:8000/script.cgi
+```
+
+#### Rate Limiting
+```bash
+# Should be blocked after too many requests
 for i in {1..100}; do
     curl http://localhost:8000/
     sleep 0.1
 done
-# Expected: Should start receiving 429 Too Many Requests
 ```
 
-### 3. File Type Restrictions
-```bash
-# Test prohibited file types
-curl http://localhost:8000/test.php
-# Expected: 403 Forbidden
-
-curl http://localhost:8000/shell.cgi
-# Expected: 403 Forbidden
-
-curl http://localhost:8000/.htaccess
-# Expected: 403 Forbidden
-```
-
-### 4. Security Headers
+#### Security Headers
 ```bash
 # Check security headers
 curl -I http://localhost:8000/index.html
-
-# Expected headers:
-# X-Frame-Options: DENY
-# X-Content-Type-Options: nosniff
-# X-XSS-Protection: 1; mode=block
-# Content-Security-Policy: default-src 'self'
 ```
 
-### 5. Input Validation
+### 3. Error Handling
+
 ```bash
-# Test XSS attempt
-curl "http://localhost:8000/<script>alert(1)</script>"
-# Expected: 400 Bad Request
+# Test 404 Not Found
+curl http://localhost:8000/nonexistent.html
 
-# Test SQL injection attempt
-curl "http://localhost:8000/page?id=1'%20OR%20'1'='1"
-# Expected: 400 Bad Request
+# Test 400 Bad Request
+printf "GET / INVALID\r\n\r\n" | nc localhost 8000
 
-# Test command injection
-curl "http://localhost:8000/$(cat /etc/passwd)"
-# Expected: 400 Bad Request
+# Test 413 Request Too Large
+curl -X POST -d @large_file http://localhost:8000/
 ```
 
-## Performance Tests
+## Performance Testing
 
-### 1. Concurrent Connections
+### 1. Basic Load Test
 ```bash
-# Test multiple concurrent connections
-ab -n 1000 -c 100 http://localhost:8000/index.html
-
-# Expected: Should handle concurrent connections without errors
+# Using Apache Bench (ab)
+ab -n 1000 -c 10 http://localhost:8000/index.html
 ```
 
-### 2. Large File Handling
+### 2. Concurrent Connections
 ```bash
-# Create a large test file
-dd if=/dev/zero of=www/large.txt bs=1M count=10
-
-# Test large file download
-curl http://localhost:8000/large.txt -o /dev/null
-# Expected: Should transfer completely without timeout
-```
-
-## Attack Simulation Tests
-
-### 1. DOS Attack Simulation
-```bash
-# Rapid connection attempts
-for i in {1..1000}; do
+# Test multiple simultaneous connections
+for i in {1..50}; do
     curl http://localhost:8000/ &
 done
-
-# Expected: Rate limiting should prevent server overload
 ```
 
-### 2. Protocol Attack Tests
-```bash
-# Invalid HTTP method
-curl -X INVALID http://localhost:8000/
-# Expected: 405 Method Not Allowed
+## Security Testing
 
-# Malformed request
-printf "GET / INVALID\r\n\r\n" | nc localhost 8000
-# Expected: 400 Bad Request
+### 1. File Access Control
+```bash
+# Create test files
+echo "public" > www/public.html
+echo "private" > www/private.txt
+
+# Test access
+curl http://localhost:8000/public.html   # Should succeed
+curl http://localhost:8000/private.txt   # Should fail
 ```
 
-### 3. Buffer Overflow Attempts
+### 2. Request Validation
 ```bash
-# Long URL
-curl "http://localhost:8000/$(printf 'A%.0s' {1..10000})"
-# Expected: 414 URI Too Long
+# Test long URLs (should fail)
+curl "http://localhost:8000/$(printf 'A%.0s' {1..1000})"
 
-# Long headers
-curl -H "X-Test: $(printf 'A%.0s' {1..10000})" http://localhost:8000/
-# Expected: 413 Request Entity Too Large
-```
-
-## Logging Tests
-
-### 1. Access Log Verification
-```bash
-# Make some requests
-curl http://localhost:8000/index.html
-curl http://localhost:8000/style.css
-
-# Check access log
-tail -f logs/access.log
-# Expected: Should show requests with timestamps and status codes
-```
-
-### 2. Error Log Verification
-```bash
-# Generate some errors
-curl http://localhost:8000/nonexistent.html
-curl http://localhost:8000/../etc/passwd
-
-# Check error log
-tail -f logs/error.log
-# Expected: Should show detailed error messages
-```
-
-### 3. Security Event Logging
-```bash
-# Generate security events
+# Test special characters (should fail)
 curl "http://localhost:8000/<script>alert(1)</script>"
-curl http://localhost:8000/../etc/passwd
-
-# Check security log
-tail -f logs/security.log
-# Expected: Should show security violations with IP addresses
 ```
 
-## Automated Testing Script
-
-Here's a script to run all tests automatically:
-
+### 3. Protocol Compliance
 ```bash
-#!/bin/bash
+# Test invalid HTTP method
+curl -X INVALID http://localhost:8000/
 
-# Colors for output
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-echo "Starting comprehensive server tests..."
-
-# Function to test and report
-test_feature() {
-    local test_name=$1
-    local command=$2
-    local expected=$3
-    
-    echo -n "Testing $test_name... "
-    result=$(eval $command)
-    if [[ $result == *"$expected"* ]]; then
-        echo -e "${GREEN}PASS${NC}"
-    else
-        echo -e "${RED}FAIL${NC}"
-    fi
-}
-
-# Basic functionality tests
-test_feature "Basic Access" \
-    "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/index.html" \
-    "200"
-
-# Security tests
-test_feature "Path Traversal" \
-    "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/../etc/passwd" \
-    "403"
-
-test_feature "Rate Limiting" \
-    "for i in {1..100}; do curl -s http://localhost:8000/ > /dev/null; done" \
-    "429"
-
-test_feature "File Type Restriction" \
-    "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/test.php" \
-    "403"
-
-test_feature "Security Headers" \
-    "curl -s -I http://localhost:8000/index.html" \
-    "X-Frame-Options: DENY"
-
-echo "Tests complete!"
+# Test invalid HTTP version
+printf "GET / HTTP/9.9\r\n\r\n" | nc localhost 8000
 ```
 
-## Monitoring Guide
+## Monitoring
 
-### Real-time Monitoring
-Use this command to monitor server activity in real-time:
+### 1. Log Analysis
 ```bash
-# Watch all logs
-tail -f logs/access.log logs/error.log logs/security.log
+# Watch logs in real-time
+tail -f logs/server.log
 
-# Monitor connections
+# Count error occurrences
+grep ERROR logs/server.log | wc -l
+```
+
+### 2. Connection Monitoring
+```bash
+# Monitor active connections
 watch 'netstat -an | grep 8000'
 
 # Monitor server process
 top -p $(pgrep secure_server)
 ```
 
-### Health Checks
+### 3. Resource Usage
 ```bash
-# Check server response time
-time curl http://localhost:8000/index.html
+# Check file descriptors
+lsof -p $(pgrep secure_server)
 
 # Check memory usage
 ps aux | grep secure_server
-
-# Check open file descriptors
-lsof -p $(pgrep secure_server)
 ```
 
-## Notes
+## Test Files
 
-- Run tests in a development environment
-- Some tests may trigger security measures
-- Rate limiting may require delays between tests
-- Monitor system resources during testing
-- Check logs for detailed information about failures
+### Create Test Content
+```bash
+# Create test HTML
+cat > www/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Misewe Test</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Welcome to Misewe</h1>
+    <p>Server is running!</p>
+</body>
+</html>
+EOF
 
-For troubleshooting:
-1. Check logs in logs/ directory
-2. Verify server configuration
-3. Ensure proper permissions
-4. Monitor system resources
-5. Check network connectivity
+# Create test CSS
+cat > www/style.css << 'EOF'
+body {
+    font-family: Arial, sans-serif;
+    margin: 40px;
+    background: #f0f0f0;
+}
+EOF
+```
+
+## Common Issues
+
+1. **Permission Denied**
+   - Solution: Check file permissions in www directory
+
+2. **Address Already in Use**
+   - Solution: Check if another instance is running
+   - Use: `lsof -i :8000`
+
+3. **Connection Refused**
+   - Solution: Verify server is running
+   - Check: `ps aux | grep secure_server`
+
+## Performance Baselines
+
+- Response time: < 10ms
+- Concurrent connections: 100+
+- Memory usage: < 10MB
+- CPU usage: < 5%
+
+## Test Cleanup
+
+```bash
+# Stop server
+killall secure_server
+
+# Clean logs
+rm -f logs/*
+
+# Remove test files
+rm -f www/*
+```
+
+Remember to always monitor the server logs while testing for detailed information about any issues or security events.

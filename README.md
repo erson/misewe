@@ -1,130 +1,132 @@
-# Secure HTTP Server
+# Misewe - Minimal Secure Web Server
 
-A minimal, security-focused HTTP server implementation in C.
+Misewe is a minimal, security-focused web server written in C. It's designed to be lightweight while maintaining strong security features.
 
 ## Features
 
-- Single-threaded event loop architecture
-- Rate limiting per IP address
-- Strict file type restrictions
-- Path traversal prevention
-- Security headers
-- Connection timeouts
-- Graceful shutdown
-- localhost-only binding
-
-## Security Measures
-
-### Network Security
-- Binds only to localhost (127.0.0.1)
-- Connection timeouts prevent resource exhaustion
-- Rate limiting prevents DOS attacks
-- Only serves GET requests
-
-### File Security
-- Strict path validation
-- No directory traversal
-- Whitelisted file extensions (.html, .txt, .css, .js)
-- File size checks
-
-### HTTP Security
-- Security headers (CSP, X-Frame-Options, etc.)
-- No server information disclosure
-- Request size limits
-- Method restrictions
+- 🔒 Security-first design
+- 📁 Static file serving
+- ⚡️ Fast and lightweight
+- 🛡️ Built-in security headers
+- 🚫 Path traversal prevention
+- 🔑 File type restrictions
+- 📝 Detailed logging
+- ⏰ Request rate limiting
 
 ## Building
 
-### Regular Build
+### Prerequisites
+
 ```bash
-make
+# On Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install gcc make
+
+# On macOS
+xcode-select --install
 ```
 
-### Debug Build (with sanitizers)
+### Compilation
+
 ```bash
-make debug
+# Clone the repository
+git clone https://github.com/yourusername/misewe.git
+cd misewe
+
+# Build the server
+make clean
+make
 ```
 
 ## Usage
 
+### Starting the Server
+
 ```bash
-./server
+# Create web root directory if it doesn't exist
+mkdir -p www
+
+# Create a test page
+echo "<h1>Welcome to Misewe</h1>" > www/index.html
+
+# Run the server
+./bin/secure_server
 ```
 
-The server will listen on port 8000 by default.
+The server will start on localhost:8000 by default.
+
+### Directory Structure
+
+```
+misewe/
+├── src/           # Source files
+├── include/       # Header files
+├── www/          # Web root directory
+├── logs/         # Log files
+├── obj/          # Object files
+└── bin/          # Binary output
+```
+
+### Configuration
+
+Default settings:
+- Port: 8000
+- Bind Address: 127.0.0.1
+- Web Root: ./www
+- Max Request Size: 8192 bytes
+- Allowed File Types: .html, .css, .js, .txt
+
+## Security Features
+
+1. **Request Validation**
+   - Path traversal prevention
+   - File type restrictions
+   - Request size limits
+   - Character validation
+
+2. **Security Headers**
+   - X-Content-Type-Options: nosniff
+   - X-Frame-Options: DENY
+   - X-XSS-Protection: 1; mode=block
+   - Content-Security-Policy: default-src 'self'
+
+3. **Rate Limiting**
+   - Per-IP tracking
+   - Configurable limits
+   - Automatic blocking
+
+4. **Logging**
+   - Access logging
+   - Error logging
+   - Security events
 
 ## Testing
 
+Run the test suite:
 ```bash
-# Basic GET request
-curl http://localhost:8000/index.html
-
-# Rate limit test
-for i in {1..20}; do curl http://localhost:8000/index.html; done
-
-# Security test (should fail)
-curl http://localhost:8000/../etc/passwd
+./test.sh
 ```
 
-## Design Principles
+See TEST.md for detailed testing information.
 
-1. **Secure by Default**
-   - All security features enabled
-   - No unsafe configurations possible
-   - Fails closed rather than open
+## Monitoring
 
-2. **Resource Management**
-   - Clear ownership of resources
-   - Automatic cleanup
-   - No resource leaks
+Monitor server logs:
+```bash
+# Watch access log
+tail -f logs/server.log
 
-3. **Error Handling**
-   - All errors checked and handled
-   - Clear error paths
-   - No undefined behavior
-
-4. **Code Organization**
-   - Modular design
-   - Clear interfaces
-   - Minimal dependencies
-
-## Architecture
-
-```
-+----------------+
-|    main.c      |
-|  (entry point) |
-+----------------+
-        |
-+----------------+
-|   server.h     |
-| (public API)   |
-+----------------+
-        |
-+----------------+
-|   server.c     |
-|(implementation)|
-+----------------+
+# Monitor connections
+netstat -an | grep 8000
 ```
 
-## Memory Model
+## Contributing
 
-```
-server_ctx_t (heap)
-├── fd (socket)
-├── port
-├── running flag
-└── rate_limiter (heap)
-    └── clients[]
-        ├── addr
-        ├── hits[]
-        └── count
+1. Fork the repository
+2. Create your feature branch
+3. Make your changes
+4. Submit a pull request
 
-client_ctx_t (stack)
-├── fd (socket)
-├── addr
-└── request
-    ├── method
-    ├── path
-    └── version
-```
+## License
+
+MIT License - see LICENSE file for details.
