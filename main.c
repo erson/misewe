@@ -1,24 +1,22 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "server.h"
 
 int main(void) {
-    server_ctx_t *server;
-    server_err_t err;
+    server_config_t config = {
+        .port = 8000,
+        .root_dir = "."
+    };
 
-    /* Create server context */
-    server = server_create(SERVER_PORT);
+    server_t *server = server_create(&config);
     if (!server) {
         fprintf(stderr, "Failed to create server\n");
         return 1;
     }
 
-    /* Run server */
-    err = server_run(server);
-    if (err != SERVER_OK) {
-        fprintf(stderr, "Server error: %d\n", err);
-    }
-
-    /* Cleanup */
+    printf("Server running on port %d\n", config.port);
+    server_run(server);
     server_destroy(server);
-    return err == SERVER_OK ? 0 : 1;
+
+    return 0;
 }

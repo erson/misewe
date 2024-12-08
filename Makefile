@@ -1,36 +1,48 @@
 # Compiler settings
-CC      = gcc
-CFLAGS  = -Wall -Wextra -Werror -pedantic -std=c11
-CFLAGS += -D_FORTIFY_SOURCE=2 -fstack-protector-strong
-CFLAGS += -O2 -g
-LDFLAGS = -pthread
+CC = gcc
+CFLAGS = -Wall -Wextra -O2 -g
+LDFLAGS = -lpthread -lm
 
-# Debug flags
-DBGFLAGS = -g3 -DDEBUG -fsanitize=address,undefined
+# System detection
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS specific settings
+    CFLAGS += -I/usr/include -I/usr/local/include
+    LDFLAGS += -L/usr/local/lib
+endif
+ifeq ($(UNAME_S),Linux)
+    # Linux specific settings
+    CFLAGS += -D_GNU_SOURCE
+    LDFLAGS += -lrt
+endif
 
 # Source files
-SRCS = main.c server.c
+SRCS = main.c \
+       server.c \
+       http.c \
+       secure_log.c \
+       security_monitor.c \
+       request_filter.c
+
+# Object files
 OBJS = $(SRCS:.c=.o)
-DEPS = $(SRCS:.c=.d)
 
 # Output binary
-TARGET = server
+TARGET = secure_server
 
-# Targets
-.PHONY: all clean debug
-
+# Default target
 all: $(TARGET)
 
-debug: CFLAGS += $(DBGFLAGS)
-debug: clean $(TARGET)
-
+# Link object files
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
+# Compile source files
 %.o: %.c
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
+# Clean build
 clean:
-	rm -f $(TARGET) $(OBJS) $(DEPS)
+	rm -f $(TARGET) $(OBJS)
 
--include $(DEPS)
+.PHONY: all clean
