@@ -4,8 +4,7 @@
 typedef enum {
     LOG_INFO,
     LOG_WARN,
-    LOG_ERROR,
-    LOG_SECURITY
+    LOG_ERROR
 } log_level_t;
 
 void log_init(const char *access_log, const char *error_log);
