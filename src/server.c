@@ -1,5 +1,6 @@
 #include "server.h"
 #include "http.h"
+#include "rate_limiter.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
@@ -15,6 +16,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <linux/limits.h>
 
 /* Get formatted timestamp */
 static char* get_timestamp(void) {
@@ -30,41 +32,68 @@ struct server {
     int sock_fd;
     server_config_t config;
     bool running;
+    rate_limiter_t *rate_limiter;
 };
 
 /* Check if path contains traversal attempts */
 static bool has_path_traversal(const char *path) {
+    if (!path) return true;
+
     /* Check for basic traversal patterns */
     if (strstr(path, "..") || strstr(path, "//") || strstr(path, "\\"))
         return true;
 
-    /* Check for encoded traversal */
-    if (strstr(path, "%2e%2e") || strstr(path, "%2E%2E"))
-        return true;
+    /* Check for URL-encoded traversal */
+    const char *encoded_traversal[] = {
+        "%2e%2e", "%2E%2E",  /* .. */
+        "%2f",    "%2F",     /* / */
+        "%5c",    "%5C",     /* \ */
+        NULL
+    };
 
-    /* Check for absolute paths */
-    if (path[0] == '/')
-        path++;  /* Skip leading slash for root-relative paths */
-    else
-        return true;  /* Reject non-root-relative paths */
-
-    /* Normalize and check path components */
-    char normalized[512];
-    const char *src = path;
-    char *dst = normalized;
-    
-    while (*src) {
-        if (*src == '.' && (src[1] == '/' || src[1] == '\0'))
-            return true;  /* Reject current directory marker */
-        if (*src == '/' && src[1] == '/')
-            return true;  /* Reject double slashes */
-        *dst++ = *src++;
-        if (dst - normalized >= (ptrdiff_t)sizeof(normalized) - 1)
-            return true;  /* Path too long */
+    for (const char **pattern = encoded_traversal; *pattern; pattern++) {
+        if (strstr(path, *pattern))
+            return true;
     }
-    *dst = '\0';
 
-    return false;
+    /* Must start with / */
+    if (path[0] != '/') {
+        return true;
+    }
+
+    /* Get absolute paths */
+    char www_path[PATH_MAX];
+    char requested_path[PATH_MAX];
+    char *www_real = realpath("www", www_path);
+    if (!www_real) return true;
+
+    /* Build full requested path */
+    snprintf(requested_path, sizeof(requested_path), "www%s", path);
+    char *req_real = realpath(requested_path, NULL);
+    
+    /* If path doesn't exist, check if it would be under www */
+    if (!req_real) {
+        char *last_slash = strrchr(requested_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            req_real = realpath(requested_path, NULL);
+            if (!req_real) return true;
+            
+            /* Check if parent directory is under www */
+            if (strncmp(req_real, www_path, strlen(www_path)) != 0) {
+                free(req_real);
+                return true;
+            }
+            free(req_real);
+            return false;
+        }
+        return true;
+    }
+
+    /* Check if path is under www directory */
+    bool result = (strncmp(req_real, www_path, strlen(www_path)) == 0);
+    free(req_real);
+    return !result;
 }
 
 /* Check if file type is allowed */
@@ -79,10 +108,13 @@ static bool is_allowed_file_type(const char *path) {
     if (!ext) {
         /* No extension - only allow if it's a directory */
         struct stat st;
-        char fullpath[512] = "www";
+        char fullpath[PATH_MAX] = "www";
         strncat(fullpath, path, sizeof(fullpath) - 4);
-        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode))
-            return true;
+        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode)) {
+            /* For directories, require trailing slash */
+            size_t len = strlen(path);
+            return len > 0 && path[len-1] == '/';
+        }
         return false;
     }
 
@@ -93,11 +125,37 @@ static bool is_allowed_file_type(const char *path) {
         ".js",           /* JavaScript */
         ".txt",          /* Text files */
         ".ico",          /* Favicon */
-        ".png", ".jpg", ".jpeg", ".gif",  /* Images */
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", /* Images */
+        ".svg",          /* SVG images */
+        ".woff", ".woff2", ".ttf", ".eot",  /* Fonts */
+        ".json", ".xml", /* Data files */
         NULL
     };
 
-    /* Check against allowed extensions */
+    /* Make a copy of path for extension checks */
+    char *path_copy = strdup(path);
+    if (!path_copy) return false;
+
+    /* Check for disallowed extensions anywhere in the path */
+    const char *disallowed_exts[] = {
+        ".php", ".asp", ".aspx", ".jsp", ".cgi", ".pl", ".py",
+        ".sh", ".bash", ".exe", ".dll", ".so",
+        NULL
+    };
+
+    char *curr_ext = path_copy;
+    while ((curr_ext = strchr(curr_ext, '.'))) {
+        for (const char **disallowed = disallowed_exts; *disallowed; disallowed++) {
+            if (strcasecmp(curr_ext, *disallowed) == 0) {
+                free(path_copy);
+                return false;
+            }
+        }
+        curr_ext++;
+    }
+    free(path_copy);
+
+    /* Check against allowed extensions (case-insensitive) */
     for (const char **allowed = allowed_exts; *allowed; allowed++) {
         if (strcasecmp(ext, *allowed) == 0) {
             return true;
@@ -117,6 +175,10 @@ static bool build_file_path(const char *request_path, char *filepath, size_t fil
     if (has_path_traversal(request_path))
         return false;
 
+    /* Check file type */
+    if (!is_allowed_file_type(request_path))
+        return false;
+
     /* Initialize with web root */
     strncpy(filepath, "www", filepath_size);
     filepath[filepath_size - 1] = '\0';
@@ -125,6 +187,25 @@ static bool build_file_path(const char *request_path, char *filepath, size_t fil
     if (strcmp(request_path, "/") == 0) {
         strncat(filepath, "/index.html", filepath_size - strlen(filepath) - 1);
         return true;
+    }
+
+    /* Handle directory index */
+    size_t path_len = strlen(request_path);
+    if (path_len > 0 && request_path[path_len - 1] == '/') {
+        char *temp_path = malloc(path_len + 11); /* +11 for "index.html\0" */
+        if (!temp_path) return false;
+        
+        strcpy(temp_path, request_path);
+        strcat(temp_path, "index.html");
+        
+        bool result = false;
+        if (strlen(filepath) + strlen(temp_path) < filepath_size) {
+            strcat(filepath, temp_path);
+            result = true;
+        }
+        
+        free(temp_path);
+        return result;
     }
 
     /* Append request path */
@@ -156,9 +237,23 @@ server_t *server_create(const server_config_t *config) {
     /* Copy configuration */
     server->config = *config;
     
+    /* Initialize rate limiter */
+    rate_limit_config_t rate_config = {
+        .requests_per_second = config->max_requests / 60,  // Convert per minute to per second
+        .burst_size = config->max_requests,
+        .window_seconds = 60
+    };
+    
+    server->rate_limiter = rate_limiter_create(&rate_config);
+    if (!server->rate_limiter) {
+        free(server);
+        return NULL;
+    }
+    
     /* Create socket */
     server->sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server->sock_fd < 0) {
+        rate_limiter_destroy(server->rate_limiter);
         free(server);
         return NULL;
     }
@@ -167,6 +262,7 @@ server_t *server_create(const server_config_t *config) {
     int opt = 1;
     if (setsockopt(server->sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         close(server->sock_fd);
+        rate_limiter_destroy(server->rate_limiter);
         free(server);
         return NULL;
     }
@@ -180,6 +276,7 @@ server_t *server_create(const server_config_t *config) {
 
     if (bind(server->sock_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         close(server->sock_fd);
+        rate_limiter_destroy(server->rate_limiter);
         free(server);
         return NULL;
     }
@@ -187,6 +284,7 @@ server_t *server_create(const server_config_t *config) {
     /* Start listening */
     if (listen(server->sock_fd, SOMAXCONN) < 0) {
         close(server->sock_fd);
+        rate_limiter_destroy(server->rate_limiter);
         free(server);
         return NULL;
     }
@@ -201,14 +299,25 @@ void server_destroy(server_t *server) {
         if (server->sock_fd >= 0) {
             close(server->sock_fd);
         }
+        if (server->rate_limiter) {
+            rate_limiter_destroy(server->rate_limiter);
+        }
         free(server);
     }
 }
 
+/* Client connection context */
+typedef struct {
+    int fd;
+    server_t *server;
+} client_context_t;
+
 /* Handle client connection */
 static void *handle_client(void *arg) {
-    int client_fd = *(int*)arg;
-    free(arg);
+    client_context_t *ctx = (client_context_t*)arg;
+    int client_fd = ctx->fd;
+    server_t *server = ctx->server;
+    free(ctx);
 
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
@@ -251,12 +360,20 @@ static void *handle_client(void *arg) {
         return NULL;
     }
 
-    /* Build file path */
+    /* Build file path with security checks */
     char filepath[512];
     if (!build_file_path(req.path, filepath, sizeof(filepath))) {
         printf("[%s] Invalid path: %s from %s\n", 
                get_timestamp(), req.path, inet_ntoa(addr.sin_addr));
-        http_send_error(client_fd, 400, "Bad Request");
+        http_send_error(client_fd, 403, "Forbidden");
+        close(client_fd);
+        return NULL;
+    }
+
+    /* Check rate limit after security checks */
+    if (!rate_limiter_check(server->rate_limiter, inet_ntoa(addr.sin_addr))) {
+        printf("[%s] Rate limit exceeded for %s\n", get_timestamp(), inet_ntoa(addr.sin_addr));
+        http_send_error(client_fd, 429, "Too Many Requests");
         close(client_fd);
         return NULL;
     }
@@ -327,26 +444,27 @@ bool server_run(server_t *server) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         
-        int *client_fd = malloc(sizeof(int));
-        if (!client_fd) {
+        client_context_t *ctx = malloc(sizeof(client_context_t));
+        if (!ctx) {
             printf("[%s] Memory allocation failed for new connection\n", get_timestamp());
             continue;
         }
 
-        *client_fd = accept(server->sock_fd, (struct sockaddr*)&client_addr, &client_len);
-        if (*client_fd < 0) {
+        ctx->fd = accept(server->sock_fd, (struct sockaddr*)&client_addr, &client_len);
+        if (ctx->fd < 0) {
             printf("[%s] Failed to accept connection\n", get_timestamp());
-            free(client_fd);
+            free(ctx);
             continue;
         }
+        ctx->server = server;
 
         /* Create thread to handle client */
         pthread_t thread;
-        if (pthread_create(&thread, NULL, handle_client, client_fd) != 0) {
+        if (pthread_create(&thread, NULL, handle_client, ctx) != 0) {
             printf("[%s] Failed to create thread for client: %s\n", 
                    get_timestamp(), inet_ntoa(client_addr.sin_addr));
-            close(*client_fd);
-            free(client_fd);
+            close(ctx->fd);
+            free(ctx);
             continue;
         }
         pthread_detach(thread);

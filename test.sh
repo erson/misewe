@@ -36,7 +36,7 @@ run_test() {
     printf "Testing %s... " "$name"
     TOTAL=$((TOTAL + 1))
     
-    eval "$cmd" > /dev/null 2>&1
+    output=$(eval "$cmd" 2>&1)
     result=$?
     
     if [ $result -eq "$expected" ]; then
@@ -44,6 +44,8 @@ run_test() {
         PASSED=$((PASSED + 1))
     else
         printf "%sFAILED%s\n" "${RED}" "${NC}"
+        printf "Expected exit code: %d, got: %d\n" "$expected" "$result"
+        printf "Command output:\n%s\n" "$output"
         FAILED=$((FAILED + 1))
     fi
 }
@@ -76,10 +78,10 @@ print_header "Security Tests"
 
 # Security feature tests
 run_test "path traversal prevention" \
-    "curl -s http://${SERVER_HOST}:${SERVER_PORT}/../etc/passwd" 22
+    "curl -s -f -v http://${SERVER_HOST}:${SERVER_PORT}/../etc/passwd" 22
 
 run_test "file type restrictions" \
-    "curl -s http://${SERVER_HOST}:${SERVER_PORT}/test.php" 22
+    "curl -s -f -v http://${SERVER_HOST}:${SERVER_PORT}/test.php" 22
 
 run_test "XSS protection headers" \
     "curl -s -I http://${SERVER_HOST}:${SERVER_PORT}/index.html | grep -q 'X-XSS-Protection'" 0
@@ -87,23 +89,27 @@ run_test "XSS protection headers" \
 # Rate limiting test
 print_header "Rate Limiting Test"
 printf "Testing rate limiting... "
+TOTAL=$((TOTAL + 1))
+
+printf "Sending 100 requests in quick succession...\n"
 count=0
+blocked=0
 for i in $(seq 1 100); do
-    if ! curl -s "http://${SERVER_HOST}:${SERVER_PORT}/" > /dev/null; then
+    response=$(curl -s -w "%{http_code}" "http://${SERVER_HOST}:${SERVER_PORT}/" -o /dev/null)
+    if [ "$response" = "429" ]; then
+        blocked=$((blocked + 1))
         break
     fi
     count=$((count + 1))
-    sleep 1
 done
 
-if [ $count -lt 100 ]; then
-    printf "%sPASSED%s\n" "${GREEN}" "${NC}"
+if [ $blocked -gt 0 ]; then
+    printf "%sPASSED%s (Blocked after %d requests)\n" "${GREEN}" "${NC}" "$count"
     PASSED=$((PASSED + 1))
 else
-    printf "%sFAILED%s\n" "${RED}" "${NC}"
+    printf "%sFAILED%s (No rate limiting detected after %d requests)\n" "${RED}" "${NC}" "$count"
     FAILED=$((FAILED + 1))
 fi
-TOTAL=$((TOTAL + 1))
 
 print_header "Security Headers Test"
 
