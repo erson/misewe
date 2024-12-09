@@ -1,9 +1,15 @@
-#!/bin/bash
+#!/bin/sh
 
-# Colors for output
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
+# Colors for output (using tput for better portability)
+if [ -t 1 ]; then
+    GREEN=$(tput setaf 2)
+    RED=$(tput setaf 1)
+    NC=$(tput sgr0)
+else
+    GREEN=""
+    RED=""
+    NC=""
+fi
 
 # Base URL
 BASE_URL="http://localhost:8000"
@@ -12,62 +18,70 @@ echo "Running security tests..."
 
 # Test 1: Basic Access
 test_basic_access() {
-    echo -n "Testing basic access... "
+    printf "Testing basic access... "
     if curl -s "$BASE_URL/index.html" > /dev/null; then
-        echo -e "${GREEN}OK${NC}"
+        printf "%sOK%s\n" "${GREEN}" "${NC}"
     else
-        echo -e "${RED}FAILED${NC}"
+        printf "%sFAILED%s\n" "${RED}" "${NC}"
     fi
 }
 
 # Test 2: Path Traversal Prevention
 test_path_traversal() {
-    echo -n "Testing path traversal prevention... "
-    if curl -s "$BASE_URL/../etc/passwd" > /dev/null; then
-        echo -e "${RED}VULNERABLE${NC}"
+    printf "Testing path traversal prevention... "
+    if curl -s -f "$BASE_URL/../etc/passwd" > /dev/null 2>&1; then
+        printf "%sVULNERABLE%s\n" "${RED}" "${NC}"
     else
-        echo -e "${GREEN}PROTECTED${NC}"
+        printf "%sPROTECTED%s\n" "${GREEN}" "${NC}"
     fi
 }
 
 # Test 3: File Type Restrictions
 test_file_restrictions() {
-    echo -n "Testing file type restrictions... "
-    if curl -s "$BASE_URL/test.php" > /dev/null; then
-        echo -e "${RED}VULNERABLE${NC}"
+    printf "Testing file type restrictions... "
+    if curl -s -f "$BASE_URL/test.php" > /dev/null 2>&1; then
+        printf "%sVULNERABLE%s\n" "${RED}" "${NC}"
     else
-        echo -e "${GREEN}PROTECTED${NC}"
+        printf "%sPROTECTED%s\n" "${GREEN}" "${NC}"
     fi
 }
 
 # Test 4: Rate Limiting
 test_rate_limiting() {
-    echo -n "Testing rate limiting... "
+    printf "Testing rate limiting... "
     count=0
-    for i in {1..100}; do
-        if curl -s "$BASE_URL/" > /dev/null; then
-            ((count++))
+    blocked=0
+    i=0
+    while [ $i -lt 100 ] && [ $blocked -eq 0 ]; do
+        response=$(curl -s -w "%{http_code}" -o /dev/null "$BASE_URL/")
+        if [ "$response" = "429" ]; then
+            blocked=1
+        elif [ "$response" = "200" ]; then
+            count=$((count + 1))
         else
-            break
+            printf "%sFAILED%s (Unexpected response code: %s)\n" "${RED}" "${NC}" "$response"
+            return 1
         fi
+        i=$((i + 1))
     done
-    if [ $count -lt 100 ]; then
-        echo -e "${GREEN}WORKING${NC}"
+    
+    if [ $blocked -eq 1 ]; then
+        printf "%sWORKING%s (Blocked after %d requests)\n" "${GREEN}" "${NC}" "$count"
     else
-        echo -e "${RED}NOT WORKING${NC}"
+        printf "%sNOT WORKING%s (No rate limiting after %d requests)\n" "${RED}" "${NC}" "$count"
     fi
 }
 
 # Test 5: Security Headers
 test_security_headers() {
-    echo -n "Testing security headers... "
+    printf "Testing security headers... "
     headers=$(curl -s -I "$BASE_URL/index.html")
-    if echo "$headers" | grep -q "X-Frame-Options" && \
-       echo "$headers" | grep -q "X-Content-Type-Options" && \
-       echo "$headers" | grep -q "X-XSS-Protection"; then
-        echo -e "${GREEN}OK${NC}"
+    if printf "%s" "$headers" | grep -q "X-Frame-Options" && \
+       printf "%s" "$headers" | grep -q "X-Content-Type-Options" && \
+       printf "%s" "$headers" | grep -q "X-XSS-Protection"; then
+        printf "%sOK%s\n" "${GREEN}" "${NC}"
     else
-        echo -e "${RED}MISSING${NC}"
+        printf "%sMISSING%s\n" "${RED}" "${NC}"
     fi
 }
 
