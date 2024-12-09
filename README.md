@@ -8,6 +8,7 @@ A lightweight, security-first web server written in C that doesn't compromise on
 - ⚡ **Blazing Fast**: Optimized C implementation with zero-copy file serving
 - 🧪 **Battle-tested**: Comprehensive test suite covering security and performance
 - 🔧 **Easy to Configure**: Simple configuration for all security features
+- 🌐 **Portable**: Works across different Unix-like systems and Windows (via WSL)
 
 ## Quick Start
 
@@ -25,27 +26,32 @@ make
 
 That's it! Your secure web server is running at http://localhost:8000
 
-## Real-World Security Features
+## Security Features
 
-### XSS Protection
-We don't just set headers - we actively sanitize content and implement CSP:
-```bash
-# Check the headers yourself
-curl -I http://localhost:8000 | grep -i xss
-```
+### Path Traversal Prevention
+- Strict path validation using realpath()
+- Blocks access to files outside web root
+- Handles URL-encoded traversal attempts
+- Validates path components for safety
+
+### File Type Restrictions
+- Whitelist of allowed file extensions
+- Blocks dangerous file types (PHP, ASP, etc.)
+- Multiple extension checking (e.g., .php.html)
+- Directory access control with trailing slash requirement
 
 ### Rate Limiting
-Protect against DDoS and brute force attacks:
-```bash
-# Configuration example
-max_requests=100
-time_window=60  # seconds
-```
+- Per-IP request tracking
+- Configurable window and request limits
+- Burst handling with token bucket algorithm
+- Automatic blocking of excessive requests
 
-### Smart File Access
-- Automatic MIME type detection
-- Path traversal prevention
-- Extension blacklisting
+### Security Headers
+- X-Frame-Options: DENY
+- X-Content-Type-Options: nosniff
+- X-XSS-Protection: 1; mode=block
+- Content-Security-Policy: default-src 'self'
+- Strict-Transport-Security: max-age=31536000
 
 ## Configuration Guide
 
@@ -54,15 +60,15 @@ Create a `config.ini` in your root directory:
 [server]
 port=8000
 threads=4
+web_root=www
 
 [security]
 enable_rate_limit=true
-rate_limit_requests=100
+rate_limit_requests=60
 rate_limit_window=60
 
-[cors]
-enable_cors=true
-allowed_origins=https://yourdomain.com
+[files]
+allowed_extensions=.html,.htm,.css,.js,.txt,.ico,.png,.jpg,.jpeg,.gif,.webp,.svg,.woff,.woff2,.ttf,.eot,.json,.xml
 ```
 
 ## Development Setup
@@ -72,61 +78,70 @@ You'll need:
 - GCC or Clang
 - Make
 - pthread library
+- curl (for testing)
 
-On Ubuntu/Debian:
+#### On Ubuntu/Debian:
 ```bash
 sudo apt update
-sudo apt install build-essential libpthread-stubs0-dev
+sudo apt install build-essential libpthread-stubs0-dev curl
 ```
 
-### Building for Development
+#### On macOS:
 ```bash
-# Build with debug symbols
+brew install gcc make curl
+```
+
+#### On Windows (WSL):
+```bash
+wsl --install  # If WSL not installed
+sudo apt update
+sudo apt install build-essential libpthread-stubs0-dev curl
+```
+
+### Building
+```bash
+# Standard build
+make
+
+# Debug build
 make DEBUG=1
 
 # Run tests
 make test
+./test.sh
 ```
 
-## Performance Tips
+## Portability Notes
 
-1. **File Serving**
-   - Enable zero-copy transfers
-   - Use appropriate buffer sizes
+### File System
+- Uses PATH_MAX from <linux/limits.h> for path buffers
+- Falls back to 4096 if not defined
+- Handles both forward and backslashes for paths
+- Uses realpath() for canonical path resolution
 
-2. **Connection Handling**
-   - Adjust thread pool size based on CPU cores
-   - Fine-tune keep-alive settings
+### Network
+- Supports both IPv4 and IPv6
+- Handles platform-specific socket options
+- Proper error handling for different systems
 
-## Contributing
+### Threading
+- POSIX threads (pthread) for portability
+- Fallback to single-threaded mode if unavailable
+- Thread-safe data structures and operations
 
-We love contributions! Here's how to get started:
+## Latest Changes
 
-1. Fork the repo
-2. Create a feature branch
-3. Write clean, commented code
-4. Add tests for new features
-5. Submit a PR
+### Security Improvements (v1.1.0)
+- Enhanced path traversal prevention using realpath()
+- Added comprehensive file type restrictions
+- Improved rate limiting with proper request order
+- Fixed security check bypass issues
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Address already in use**
-   ```bash
-   # Check if port 8000 is in use
-   lsof -i :8000
-   # Kill existing process if needed
-   kill $(lsof -t -i:8000)
-   ```
-
-2. **Permission denied**
-   ```bash
-   # Check log directory permissions
-   ls -la logs/
-   # Fix permissions
-   chmod 755 logs/
-   ```
+### Bug Fixes
+- Fixed rate limiter counting after security checks
+- Corrected HTTP status codes for security violations
+- Fixed path validation for non-existent files
+- Improved error handling in security checks
 
 ## License
 
