@@ -1,4 +1,4 @@
-# Misewe - A Modern Secure Web Server
+# Misewe - A Minimal(Modern) Secure Web Server
 
 A lightweight, security-first web server written in C that doesn't compromise on performance. Whether you're serving static content or building a secure foundation for your web applications, Misewe has got you covered.
 
