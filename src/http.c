@@ -4,7 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 
-bool http_parse_request(const char *buffer, size_t length, http_request_t *req) {
+bool http_parse_request(const char *buffer, __attribute__((unused)) size_t length, http_request_t *req) {
     char method[16];
     
     /* Parse request line */

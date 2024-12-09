@@ -1,120 +1,139 @@
-# Secure Web Server
+# Misewe - A Modern Secure Web Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
-[![C99](https://img.shields.io/badge/C-99-blue.svg)]()
+A lightweight, security-first web server written in C that doesn't compromise on performance. Whether you're serving static content or building a secure foundation for your web applications, Misewe has got you covered.
 
-A high-performance, security-focused web server implementation in C. Built with an emphasis on robust security features and extensive testing, this server is designed to provide a secure foundation for serving static content while protecting against common web vulnerabilities.
+## Why Misewe?
 
-## 🚀 Features
+- 🛡️ **Security First**: Built from the ground up with security best practices
+- ⚡ **Blazing Fast**: Optimized C implementation with zero-copy file serving
+- 🧪 **Battle-tested**: Comprehensive test suite covering security and performance
+- 🔧 **Easy to Configure**: Simple configuration for all security features
 
-### Security
-- 🛡️ XSS (Cross-Site Scripting) Protection
-- 🔒 SQL Injection Prevention
-- ⏱️ Rate Limiting with IP tracking
-- 📁 File Type Validation
-- 🔑 CSRF Protection
-- 🌐 Configurable CORS Support
-- 🔐 HSTS Support
-- 📋 Content Security Policy
+## Quick Start
 
-### Performance
-- 🚄 Concurrent Connection Handling
-- 🧵 Multi-threaded Architecture
-- 🔄 Connection Pooling
-- ⚡ Zero-copy File Serving
-
-### Development
-- 🧪 Comprehensive Test Suite
-- 📝 Detailed Logging
-- 🔍 Memory Safety Checks
-- 📊 Performance Metrics
-
-## 🛠️ Building
-
-### Prerequisites
+1. Clone and build:
 ```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install gcc make
-
-# macOS
-xcode-select --install
-
-# Fedora
-sudo dnf install gcc make
-```
-
-### Compilation
-```bash
+git clone https://github.com/erson/misewe.git
+cd misewe
 make
 ```
 
-## 🧪 Testing
-
-Run the comprehensive test suite:
+2. Start the server:
 ```bash
+./bin/misewe
+```
+
+That's it! Your secure web server is running at http://localhost:8000
+
+## Real-World Security Features
+
+### XSS Protection
+We don't just set headers - we actively sanitize content and implement CSP:
+```bash
+# Check the headers yourself
+curl -I http://localhost:8000 | grep -i xss
+```
+
+### Rate Limiting
+Protect against DDoS and brute force attacks:
+```bash
+# Configuration example
+max_requests=100
+time_window=60  # seconds
+```
+
+### Smart File Access
+- Automatic MIME type detection
+- Path traversal prevention
+- Extension blacklisting
+
+## Configuration Guide
+
+Create a `config.ini` in your root directory:
+```ini
+[server]
+port=8000
+threads=4
+
+[security]
+enable_rate_limit=true
+rate_limit_requests=100
+rate_limit_window=60
+
+[cors]
+enable_cors=true
+allowed_origins=https://yourdomain.com
+```
+
+## Development Setup
+
+### Prerequisites
+You'll need:
+- GCC or Clang
+- Make
+- pthread library
+
+On Ubuntu/Debian:
+```bash
+sudo apt update
+sudo apt install build-essential libpthread-stubs0-dev
+```
+
+### Building for Development
+```bash
+# Build with debug symbols
+make DEBUG=1
+
+# Run tests
 make test
 ```
 
-## 📁 Project Structure
+## Performance Tips
 
-```
-.
-├── src/            # Source files
-│   ├── server.c    # Main server implementation
-│   ├── http.c      # HTTP protocol handling
-│   └── security.c  # Security features
-├── include/        # Header files
-├── test/          # Test suite
-│   ├── test.md    # Test documentation
-│   └── test_*.c   # Test implementations
-└── www/           # Web root directory
-```
+1. **File Serving**
+   - Enable zero-copy transfers
+   - Use appropriate buffer sizes
 
-## 🔧 Configuration
+2. **Connection Handling**
+   - Adjust thread pool size based on CPU cores
+   - Fine-tune keep-alive settings
 
-The server supports various configuration options:
-- Port and binding address
-- Rate limiting thresholds
-- Security policy settings
-- Logging levels
-- File type restrictions
+## Contributing
 
-## 🔒 Security Features
+We love contributions! Here's how to get started:
 
-### XSS Protection
-- Input validation and sanitization
-- Content-Security-Policy headers
-- XSS-Protection headers
+1. Fork the repo
+2. Create a feature branch
+3. Write clean, commented code
+4. Add tests for new features
+5. Submit a PR
 
-### SQL Injection Prevention
-- Query parameter validation
-- Pattern matching
-- Escape sequence detection
+## Troubleshooting
 
-### Rate Limiting
-- Per-IP tracking
-- Configurable time windows
-- Automatic blocking
+### Common Issues
 
-### File Validation
-- MIME type checking
-- Path traversal prevention
-- Extension whitelisting
+1. **Address already in use**
+   ```bash
+   # Check if port 8000 is in use
+   lsof -i :8000
+   # Kill existing process if needed
+   kill $(lsof -t -i:8000)
+   ```
 
-## 🤝 Contributing
+2. **Permission denied**
+   ```bash
+   # Check log directory permissions
+   ls -la logs/
+   # Fix permissions
+   chmod 755 logs/
+   ```
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## License
 
-## 📝 License
+MIT License - feel free to use in your projects, commercial or otherwise.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Need Help?
 
-## 🛡️ Security
-
-Found a security issue? Please report it privately via email instead of using the public issue tracker.
+- 📖 Check our [Wiki](https://github.com/erson/misewe/wiki)
+- 🐛 Report issues on our [Issue Tracker](https://github.com/erson/misewe/issues)
+- 💬 Join our [Discord community](https://discord.gg/misewe)

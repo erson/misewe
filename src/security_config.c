@@ -95,6 +95,7 @@ bool security_config_load(security_config_t *config, const char *filename) {
                 config->log_errors = atoi(value);
             else if (strcmp(key, "log_dir") == 0)
                 strncpy(config->log_dir, value, sizeof(config->log_dir) - 1);
+                config->log_dir[sizeof(config->log_dir) - 1] = '\0';
             else if (strcmp(key, "enable_https") == 0)
                 config->enable_https = atoi(value);
             else if (strcmp(key, "require_auth") == 0)
@@ -111,6 +112,7 @@ bool security_config_load(security_config_t *config, const char *filename) {
                 config->enable_csrf_protection = atoi(value);
             else if (strcmp(key, "csrf_token_secret") == 0)
                 strncpy(config->csrf_token_secret, value, sizeof(config->csrf_token_secret) - 1);
+                config->csrf_token_secret[sizeof(config->csrf_token_secret) - 1] = '\0';
             else if (strcmp(key, "enable_cors") == 0)
                 config->enable_cors = atoi(value);
             else if (strcmp(key, "allowed_origins") == 0)
