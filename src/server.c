@@ -16,9 +16,13 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
-#include <linux/limits.h>
+#include <limits.h>
 
-/* Get formatted timestamp */
+/**
+ * Get formatted timestamp for logging purposes
+ * 
+ * Returns a string representation of the current time in YYYY-MM-DD HH:MM:SS format
+ */
 static char* get_timestamp(void) {
     static char buffer[32];
     time_t now = time(NULL);
@@ -192,20 +196,13 @@ static bool build_file_path(const char *request_path, char *filepath, size_t fil
     /* Handle directory index */
     size_t path_len = strlen(request_path);
     if (path_len > 0 && request_path[path_len - 1] == '/') {
-        char *temp_path = malloc(path_len + 11); /* +11 for "index.html\0" */
-        if (!temp_path) return false;
-        
-        strcpy(temp_path, request_path);
-        strcat(temp_path, "index.html");
-        
-        bool result = false;
-        if (strlen(filepath) + strlen(temp_path) < filepath_size) {
-            strcat(filepath, temp_path);
-            result = true;
+        /* Directly construct the path without using a temporary variable */
+        if (strlen(filepath) + path_len + 11 < filepath_size) {
+            strncat(filepath, request_path, filepath_size - strlen(filepath) - 1);
+            strncat(filepath, "index.html", filepath_size - strlen(filepath) - 1);
+            return true;
         }
-        
-        free(temp_path);
-        return result;
+        return false;
     }
 
     /* Append request path */
@@ -388,7 +385,7 @@ static void *handle_client(void *arg) {
         return NULL;
     }
 
-    /* Get file size */
+    /* Get file stats (size, modification time) */
     struct stat st;
     if (fstat(fd, &st) < 0) {
         printf("[%s] Error reading file: %s\n", get_timestamp(), filepath);
@@ -397,8 +394,60 @@ static void *handle_client(void *arg) {
         close(client_fd);
         return NULL;
     }
+    
+    /* Generate ETag based on file metadata */
+    char *etag = http_generate_etag(st.st_mtime, st.st_size);
+    if (etag) {
+        /* Check if client already has this version */
+        if (http_check_etag_match(buffer, etag)) {
+            /* Send 304 Not Modified */
+            char headers[512] = {0};
+            snprintf(headers, sizeof(headers), "ETag: %s\r\nCache-Control: max-age=86400\r\n", etag);
+            add_security_headers(headers, sizeof(headers));
+            
+            http_send_response(client_fd, 304, "", NULL, 0, headers);
+            
+            printf("[%s] %s - %s %s - 304 Not Modified\n", 
+                   get_timestamp(), inet_ntoa(addr.sin_addr),
+                   req.method == HTTP_GET ? "GET" : "HEAD", 
+                   req.path);
+            
+            free(etag);
+            close(fd);
+            close(client_fd);
+            return NULL;
+        }
+    }
 
-    /* Read and send file */
+    /* Handle HEAD request (no body) */
+    if (req.method == HTTP_HEAD) {
+        /* Prepare response headers */
+        char headers[4096] = {0};
+        const char *mime_type = http_get_mime_type(filepath);
+        
+        /* Add cache headers */
+        if (etag) {
+            snprintf(headers, sizeof(headers), "ETag: %s\r\nCache-Control: max-age=86400\r\n", etag);
+            free(etag);
+        } else {
+            strncpy(headers, "Cache-Control: max-age=3600\r\n", sizeof(headers) - 1);
+        }
+        
+        /* Add security headers */
+        add_security_headers(headers, sizeof(headers));
+        
+        /* Send HEAD response */
+        http_send_response(client_fd, 200, mime_type, NULL, st.st_size, headers);
+        
+        printf("[%s] %s - HEAD %s - 200 OK - %ld bytes\n", 
+               get_timestamp(), inet_ntoa(addr.sin_addr), req.path, (long)st.st_size);
+        
+        close(fd);
+        close(client_fd);
+        return NULL;
+    }
+    
+    /* For GET requests, read and send file */
     char *content = malloc(st.st_size);
     if (!content) {
         printf("[%s] Memory allocation failed for file: %s\n", get_timestamp(), filepath);
@@ -417,12 +466,31 @@ static void *handle_client(void *arg) {
         return NULL;
     }
 
-    /* Send response */
-    char headers[4096];
+        /* Prepare response headers with ETag and caching information */
+    char headers[4096] = {0};
+    const char *mime_type = http_get_mime_type(filepath);
+    
+    /* Add cache headers with ETag for optimal caching */
+    if (etag) {
+        /* 24-hour cache for resources with ETag */
+        snprintf(headers, sizeof(headers), "ETag: %s\r\nCache-Control: max-age=86400\r\n", etag);
+        free(etag);
+    } else {
+        /* 1-hour cache for resources without ETag */
+        strncpy(headers, "Cache-Control: max-age=3600\r\n", sizeof(headers) - 1);
+    }
+    
+    /* Add security headers for better web protection */
     add_security_headers(headers, sizeof(headers));
-    http_send_response(client_fd, 200, "text/html", content, st.st_size, headers);
-    printf("[%s] Sent %s (%ld bytes) to %s\n", 
-           get_timestamp(), filepath, (long)st.st_size, inet_ntoa(addr.sin_addr));
+    
+    /* Send response */
+    http_send_response(client_fd, 200, mime_type, content, st.st_size, headers);
+    
+    /* Log access */
+    printf("[%s] %s - %s %s - 200 OK - %ld bytes - %s\n", 
+           get_timestamp(), inet_ntoa(addr.sin_addr), 
+           req.method == HTTP_GET ? "GET" : req.method == HTTP_HEAD ? "HEAD" : "POST",
+           req.path, (long)st.st_size, mime_type);
 
     /* Clean up */
     free(content);

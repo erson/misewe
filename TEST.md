@@ -1,230 +1,103 @@
-# Testing Misewe - A Complete Guide
+# Misewe Web Server Test Protocol
 
-This guide will walk you through testing every aspect of Misewe. Whether you're a developer contributing to the project or a system administrator deploying it, these tests will help ensure everything works as expected.
+This document describes the test protocol for the Misewe web server. The test protocol covers various aspects of the server's functionality, including HTTP requests, response headers, security features, and rate limiting.
 
-## Quick Start
+## Test Categories
 
-Run the entire test suite with a single command:
+The test protocol is organized into several categories:
+
+### 1. Basic HTTP Requests
+
+Tests the server's ability to serve different types of files:
+- HTML files
+- CSS stylesheets
+- JavaScript files
+- Image files (PNG)
+- Error handling (404 Not Found)
+
+### 2. HTTP Header Tests
+
+Verifies that the server sends correct headers based on file types:
+- Content-Type for HTML files
+- Content-Type for CSS files
+- Content-Type for JavaScript files
+- Content-Type for image files
+
+### 3. Security Header Tests
+
+Checks for essential security headers:
+- X-Frame-Options (prevents clickjacking)
+- X-Content-Type-Options (prevents MIME sniffing)
+- X-XSS-Protection (helps prevent XSS attacks)
+- Content-Security-Policy (restricts resource loading)
+- Strict-Transport-Security (HSTS, encourages HTTPS)
+
+### 4. Cache Control Tests
+
+Validates the server's cache control mechanisms:
+- ETag header presence
+- Cache-Control header presence
+- 304 Not Modified responses with If-None-Match headers
+
+### 5. Security Feature Tests
+
+Tests security-related features:
+- Path traversal prevention
+- File type restrictions
+
+### 6. HTTP Method Tests
+
+Verifies support for different HTTP methods:
+- HEAD method (headers only, no body)
+- GET method (full response)
+
+### 7. Rate Limiting Tests
+
+Tests the rate limiting functionality:
+- Sending multiple requests quickly
+- Receiving 429 (Too Many Requests) responses when limits are exceeded
+
+## Running Tests
+
+To run the complete test protocol:
+
 ```bash
-./test.sh
+# Build the server
+make
+
+# Run the test protocol
+./test-improved.sh
 ```
 
-You can customize the test environment using these environment variables:
-```bash
-# Configure server location
-export SERVER_HOST=localhost  # Default: localhost
-export SERVER_PORT=8000      # Default: 8000
-export SERVER_BINARY=misewe  # Default: misewe
+The test script will:
+1. Build the server
+2. Start the server
+3. Run all test categories
+4. Display detailed results
+5. Stop the server
 
-# Run tests
-./test.sh
+## Manual Testing
+
+For manual testing, you can use tools like `curl`:
+
+```bash
+# Test basic file access
+curl -v http://localhost:8000/index.html
+
+# Test caching with ETag
+curl -v -H "If-None-Match: \"your-etag-value\"" http://localhost:8000/index.html
+
+# Test rate limiting
+for i in {1..100}; do curl -s http://localhost:8000/; done
 ```
 
-Want to run specific security tests?
-```bash
-./test_security.sh
-```
+## Test Success Criteria
 
-## What We Test
+A successful test run will show:
+- All tests passed
+- No unexpected errors
+- All HTTP responses contain correct headers
+- Security features work as expected
+- Rate limiting properly restricts request frequency
 
-### 1. Security Features
-- ✅ XSS Protection
-- ✅ Path Traversal Prevention
-- ✅ Rate Limiting
-- ✅ File Access Control
-- ✅ Security Headers
-
-### 2. Server Functionality
-- ✅ Basic HTTP Methods (GET, POST, HEAD)
-- ✅ File Serving
-- ✅ Error Handling
-- ✅ Connection Management
-
-## Manual Testing Guide
-
-### Basic Functionality
-
-Test basic file serving:
-```bash
-# Should return your index page
-curl http://localhost:8000/index.html
-
-# Should return your stylesheet
-curl http://localhost:8000/style.css
-
-# Should return 404
-curl http://localhost:8000/nonexistent.html
-```
-
-### Security Testing
-
-1. **XSS Protection**
-   ```bash
-   # Should be blocked
-   curl "http://localhost:8000/<script>alert(1)</script>"
-   
-   # Check security headers
-   curl -I http://localhost:8000/index.html | grep -i xss
-   ```
-
-2. **Path Traversal**
-   ```bash
-   # All these should return 403 Forbidden
-   curl http://localhost:8000/../etc/passwd
-   curl http://localhost:8000/..%2f..%2fetc%2fpasswd
-   curl http://localhost:8000/assets/../../etc/passwd
-   ```
-
-3. **Rate Limiting**
-   ```bash
-   # Should get blocked after too many requests
-   for i in {1..100}; do
-       curl http://localhost:8000/
-       sleep 0.1
-   done
-   ```
-
-### Load Testing
-
-Test server performance:
-```bash
-# Install Apache Bench if needed
-sudo apt install apache2-utils
-
-# Run load test (1000 requests, 10 concurrent)
-ab -n 1000 -c 10 http://localhost:8000/index.html
-
-# Check server stats during test
-top -p $(pgrep misewe)
-```
-
-## Automated Test Suite
-
-Our test suite is organized into several components:
-
-1. **Unit Tests** (`test/test_suite.c`)
-   - HTTP Parser
-   - Security Functions
-   - Configuration Loading
-
-2. **Integration Tests** (`test_security.sh`)
-   - End-to-end Security Features
-   - Server Response Validation
-
-3. **Performance Tests** (`test/benchmark.sh`)
-   - Response Time
-   - Concurrent Connections
-   - Memory Usage
-
-## Setting Up Test Environment
-
-1. Create test files:
-```bash
-# Create test directory structure
-mkdir -p www/assets www/css
-
-# Create test HTML file
-cat > www/index.html << EOF
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Test Page</title>
-    <link rel="stylesheet" href="/css/style.css">
-</head>
-<body>
-    <h1>Misewe Test Page</h1>
-</body>
-</html>
-EOF
-
-# Create test CSS
-echo "body { font-family: Arial; }" > www/css/style.css
-```
-
-2. Set up logging:
-```bash
-mkdir -p logs
-chmod 755 logs
-```
-
-## Common Test Issues
-
-### 1. Tests Failing to Connect
-```bash
-# Check if server is running on custom host/port
-curl http://$SERVER_HOST:$SERVER_PORT
-
-# Check process
-ps aux | grep $SERVER_BINARY
-```
-
-### 2. Permission Issues
-```bash
-# Fix test file permissions (Unix/Linux)
-chmod -R 755 www/
-chmod 755 test/*.sh
-
-# For Windows (in PowerShell with admin rights)
-icacls www /grant Everyone:F /t
-icacls test\*.sh /grant Everyone:F
-```
-
-### 3. Rate Limit Tests Failing
-```bash
-# Reset rate limit counters
-./bin/$SERVER_BINARY --reset-limits
-
-# Adjust rate limit in config
-vim config.ini  # modify rate_limit_requests
-```
-
-## Cross-Platform Compatibility
-
-The test suite is designed to work across different operating systems:
-
-### Unix/Linux
-- All features supported out of the box
-- Uses standard POSIX shell commands
-- Color output supported in most terminals
-
-### macOS
-- Full compatibility with Unix/Linux features
-- Install required tools: `brew install curl grep`
-
-### Windows
-- Run using Git Bash, WSL, or Cygwin
-- PowerShell support through wrapper scripts
-- Color output supported in modern terminals
-
-### Docker
-```bash
-# Run tests in container
-docker run -e SERVER_HOST=host.docker.internal \
-          -e SERVER_PORT=8000 \
-          -v $(pwd):/app \
-          -w /app \
-          alpine:latest \
-          ./test.sh
-```
-
-## Test Result Analysis
-
-Good test results should show:
-- All security tests passing
-- Response times under 10ms
-- Memory usage below 10MB
-- Zero memory leaks
-- All security headers present
-
-## Contributing New Tests
-
-1. Add unit tests to `test/test_suite.c`
-2. Add integration tests to `test_security.sh`
-3. Update this documentation
-4. Submit a PR!
-
-## Need Help?
-
-- Check the logs: `tail -f logs/test.log`
-- Join our Discord: [discord.gg/misewe](https://discord.gg/misewe)
-- Open an issue: [github.com/erson/misewe/issues](https://github.com/erson/misewe/issues)
+If any test fails, the output will indicate which specific test failed and provide details about the failure.

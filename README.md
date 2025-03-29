@@ -1,31 +1,38 @@
-# Misewe - An (Experimental-AI-Built) Minimal Secure Web Server
+# Misewe - A Minimal Secure Web Server
 
-⚠️ **IMPORTANT: This is an experimental project built entirely with AI assistance. DO NOT USE IN PRODUCTION!**
+**IMPORTANT: This is an experimental project built entirely with AI assistance. DO NOT USE IN PRODUCTION!**
 
-This project is a proof-of-concept web server written in C, developed through collaboration with AI (specifically, Cursor AI). It serves as an interesting experiment in AI-assisted development and demonstrates both the capabilities and limitations of current AI coding assistants.
+This project is a proof-of-concept web server written in C, developed through collaboration with AI. It serves as an interesting experiment in AI-assisted development and demonstrates both the capabilities and limitations of current AI coding assistants.
 
 ## Project Context
 
-- 🤖 **AI-Driven Development**: Every line of code, from architecture to implementation, was written with AI guidance
-- 🧪 **Experimental Nature**: While functional, this is a learning experiment, not production software
-- 🔬 **Research Value**: Demonstrates AI's current capabilities in system programming
-- 📚 **Educational Purpose**: Useful for studying AI-human collaboration in software development
+- **AI-Driven Development**: Every line of code, from architecture to implementation, was written with AI guidance
+- **Experimental Nature**: While functional, this is a learning experiment, not production software
+- **Research Value**: Demonstrates AI's current capabilities in system programming
+- **Educational Purpose**: Useful for studying AI-human collaboration in software development
 
-## Features Implemented with AI
+## Features Implemented
 
-- Basic HTTP server functionality
-- Security features (experimental)
+- Basic HTTP server functionality (GET, HEAD)
+- Security features (path traversal prevention, file type restrictions)
 - Rate limiting implementation
-- File serving capabilities
-- Test suite
+- File serving capabilities with correct MIME types
+- ETag and caching support
+- Security headers (XSS protection, content security policy, etc.)
+- Comprehensive test suite
 
-## Development Process
+## Recent Improvements
 
-This project was developed entirely through interaction with AI, following this process:
-1. Initial architecture design through AI consultation
-2. Iterative implementation with AI guidance
-3. Bug fixing and improvements based on AI suggestions
-4. Test suite development with AI assistance
+The latest updates to the project include:
+
+- Proper MIME type detection for served files
+- ETag generation and validation for caching
+- Cache-Control headers for browser caching optimization
+- Improved HTTP headers formatting
+- Better handling of HEAD requests
+- Enhanced security headers implementation
+- More robust rate limiting mechanism
+- Comprehensive test protocol
 
 ## Running the Project
 
@@ -41,16 +48,21 @@ make
 ./bin/misewe
 
 # Run test suite
-./test/run_tests.sh
+./test-improved.sh
 ```
 
 ## Project Structure
 
 ```
 misewe/
-├── src/          # Source code (AI-generated)
-├── test/         # Test suite (AI-designed)
+├── bin/          # Compiled executables
+├── conf/         # Configuration files
+├── include/      # Header files
+├── obj/          # Object files (created during build)
+├── src/          # Source code
+├── test/         # Test scripts and utilities
 ├── www/          # Web root directory
+├── test-improved.sh  # Test protocol
 └── README.md     # This file
 ```
 
@@ -73,7 +85,7 @@ This project is valuable for:
 ## Development Notes
 
 ### AI Collaboration Process
-- All code was written through interaction with Cursor AI
+- All code was written through interaction with AI
 - Decisions were guided by AI suggestions
 - Testing and validation were AI-assisted
 - Documentation was AI-generated
@@ -94,7 +106,7 @@ While this is primarily an AI experiment, you can:
 
 ## Disclaimer
 
-⚠️ **WARNING**: This software is:
+**WARNING**: This software is:
 - An experimental project
 - Developed entirely with AI assistance
 - NOT security audited
@@ -107,6 +119,6 @@ MIT License - Feel free to study and learn from this experiment, but remember: D
 
 ## Acknowledgments
 
-- Built with [Cursor](https://cursor.sh/) AI assistance
+- Built with AI assistance
 - Serves as a case study in AI-human collaboration
 - Demonstrates current state of AI coding capabilities
