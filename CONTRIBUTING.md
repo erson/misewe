@@ -1,6 +1,6 @@
-# Contributing to Misewe
+# Contributing to Zircon
 
-Thank you for your interest in contributing to the Misewe project! As this is primarily an AI experiment, the contribution process is somewhat different from traditional open-source projects.
+Thank you for your interest in contributing to the Zircon project! As this is primarily an AI experiment, the contribution process is somewhat different from traditional open-source projects.
 
 ## Types of Contributions
 
@@ -20,7 +20,7 @@ When contributing, please keep in mind:
 
 1. **Educational Focus**: This project is primarily meant for educational purposes, demonstrating AI capabilities in system-level programming.
 
-2. **Minimalism**: Misewe is a minimal web server by design. Contributions should respect this philosophy.
+2. **Minimalism**: Zircon is a minimal web server by design. Contributions should respect this philosophy.
 
 3. **Documentation**: All contributions should include proper documentation explaining the changes and the reasoning behind them.
 
@@ -57,4 +57,4 @@ Please follow the existing code style in the project:
 
 If you have any questions about contributing, please open an issue in the repository.
 
-Thank you for your interest in the Misewe project!
+Thank you for your interest in the Zircon project!

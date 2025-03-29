@@ -14,15 +14,15 @@ static char* get_timestamp(void) {
 }
 
 int main(void) {
-    printf("\n=== Zircon Secure Web Server ===\n");
+    printf("\n=== Misewe Secure Web Server ===\n");
     printf("[%s] Server starting up\n\n", get_timestamp());
 
-    /* Server configuration - Higher rate limit for testing */
+    /* Server configuration - Test için daha yüksek rate limit */
     server_config_t config = {
         .port = 8000,
         .bind_addr = "127.0.0.1",
         .root_dir = "www",
-        .max_requests = 10  /* Increased for testing */
+        .max_requests = 10  /* Test için yükseltildi */
     };
 
     /* Show configuration */

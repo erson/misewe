@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Misewe project will be documented in this file.
+All notable changes to the Zircon project will be documented in this file.
 
 ## [1.1.0] - 2025-03-30
 
@@ -20,6 +20,7 @@ All notable changes to the Misewe project will be documented in this file.
 - Optimized path processing logic
 - Rate limiter now bypasses localhost (127.0.0.1) for testing
 - Updated README with latest features and improvements
+- Project renamed from "Misewe" to "Zircon"
 
 ### Fixed
 - Fixed HTTP header formatting issues

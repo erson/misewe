@@ -1,4 +1,4 @@
-# Misewe - A Minimal Secure Web Server
+# Zircon - A Minimal Secure Web Server
 
 **IMPORTANT: This is an experimental project built entirely with AI assistance. DO NOT USE IN PRODUCTION!**
 
@@ -40,12 +40,12 @@ For experimental or educational purposes only:
 
 ```bash
 # Clone and build
-git clone https://github.com/erson/misewe.git
-cd misewe
+git clone https://github.com/erson/zircon.git
+cd zircon
 make
 
 # Start server (for testing only)
-./bin/misewe
+./bin/zircon
 
 # Run test suite
 ./test-improved.sh
@@ -54,7 +54,7 @@ make
 ## Project Structure
 
 ```
-misewe/
+zircon/
 ├── bin/          # Compiled executables
 ├── conf/         # Configuration files
 ├── include/      # Header files
